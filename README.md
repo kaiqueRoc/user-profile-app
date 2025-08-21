@@ -25,3 +25,19 @@ Este projeto implementa um **monólito em Node.js** com frontend básico em Reac
 cd packages/monolith-node
 npm install
 npm run dev
+```
+
+### Frontend
+```bash
+cd packages/frontend-react
+npm install
+npm run dev
+```
+
+Acesse o frontend em: `http://localhost:3000`  
+API disponível em: `http://localhost:4000`
+
+## ✅ Testes
+```bash
+npm run test
+```
