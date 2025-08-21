@@ -88,12 +88,12 @@ docker compose up --build
 
 ### Node (API Gateway)
 ```bash
-docker compose run --rm api-node npm test
+docker compose run --rm api-node-test
 ```
 
 ### Go (exemplo auth-service)
 ```bash
-docker compose run --rm auth-service go test ./...
+docker compose run --rm auth-service-test
 ```
 
 ---

@@ -1,5 +1,27 @@
 version: "3.9"
 services:
+  auth-service-test:
+    build:
+      context: ./packages/microservices-go/auth-service
+      target: test
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      BCRYPT_COST: 6
+  api-node-test:
+    build:
+      context: ./packages/api-node
+      target: test
+    depends_on:
+      - db
+
   db:
     image: postgres:15
     environment:
@@ -16,6 +38,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
 
   redis:
     image: redis:7
