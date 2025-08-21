@@ -91,7 +91,7 @@ docker compose up --build
 docker compose run --rm api-node-test
 ```
 
-### Go (exemplo auth-service)
+### Go (auth-service)
 ```bash
 docker compose run --rm auth-service-test
 ```
