@@ -1,0 +1,8 @@
+# Binaries
+/service
+*.exe
+*.out
+*.test
+
+# Modules
+vendor

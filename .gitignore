@@ -1,0 +1,15 @@
+# Node
+node_modules
+dist
+.next
+coverage
+
+# OS / Editor
+.DS_Store
+.idea
+.vscode
+
+# Env
+.env
+.env.local
+.env.*.local

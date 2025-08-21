@@ -1,0 +1,89 @@
+openapi: 3.0.3
+info:
+  title: User Profile App - API Gateway
+  version: 1.0.0
+servers:
+  - url: http://localhost:3001
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /api/auth/register:
+    post:
+      summary: Register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, displayName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6 }
+                displayName: { type: string }
+      responses:
+        '201': { description: Created }
+  /api/auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6 }
+      responses:
+        '200': { description: OK }
+  /api/profiles/me:
+    get:
+      summary: Get current profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: OK }
+  /api/posts:
+    get:
+      summary: List posts
+      responses:
+        '200': { description: OK }
+    post:
+      summary: Create post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        '201': { description: Created }
+  /api/posts/{id}/like:
+    post:
+      summary: Like/Unlike post (toggle)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
