@@ -1,165 +1,53 @@
+# User Profile App - Nível Pleno
 
-# 📘 User Profile App – Senior Challenge
+Este projeto evolui a versão Júnior para atender aos requisitos do nível Pleno do desafio.
 
-Monorepo fullstack de um sistema de **perfil de usuário com feed/timeline e curtidas**, implementado em arquitetura de **microsserviços**.  
-Inclui **frontend (Next.js)**, **API Gateway (Node.js + TS)**, **serviços em Go** para autenticação, perfis e posts, além de **PostgreSQL**, **Redis** e **WebSocket** para tempo real.  
-Tudo orquestrado com **Docker Compose**.
+## 📌 Decisões Técnicas
 
----
+- **Frontend:** Migrado para **Next.js**, oferecendo SSR e melhor performance.
+- **Banco de dados:** Alterado para **PostgreSQL** para produção realista.
+- **Cache:** Implementado **Redis** para cache de postagens mais acessadas.
+- **Testes:** Adicionados testes de integração, cobrindo fluxo de autenticação + CRUD.
+- **Documentação:** API documentada com Swagger.
 
-## 🚀 Stack
+## 🚀 Funcionalidades Implementadas
 
-- **API Gateway** → Node.js + Express (TypeScript)  
-  - JWT Auth, proxy para microserviços, Swagger UI
-- **Auth Service** (Go) → cadastro/login/validação de usuários (bcrypt + JWT)  
-- **Profile Service** (Go) → CRUD de perfis de usuário  
-- **Post Service** (Go) → posts + curtidas + WebSocket + cache Redis  
-- **Frontend** → Next.js 14 (React 18)  
-  - Registro/login, feed com tempo real, perfil editável, service worker offline  
-- **Infra** → PostgreSQL + Redis  
-- **DevOps** → Docker + Docker Compose, init SQL automático  
-- **Testes** → Jest (Node) e `go test` (serviços Go)
+- Todas do nível Júnior.
+- Migração para Next.js com UI mais responsiva.
+- Persistência em PostgreSQL.
+- Cache em Redis para operações de leitura.
+- Testes de integração.
 
----
+## ⚙️ Como Rodar
 
-## 📂 Estrutura
-
-```
-user-profile-app/
-├── docker-compose.yml
-├── .env.example
-├── ops/db/init.sql                # schema inicial (users, profiles, posts, likes)
-├── packages/
-│   ├── api-node/                  # API Gateway (Node + TS)
-│   ├── frontend-nextjs/           # Frontend (Next.js)
-│   └── microservices-go/          # Serviços em Go
-│       ├── auth-service/          # registro/login
-│       ├── profile-service/       # perfis
-│       └── post-service/          # posts + likes + WS
+### Banco de Dados
+Crie o banco PostgreSQL:
+```sql
+CREATE DATABASE user_profile_app;
 ```
 
----
-
-## ⚙️ Como rodar
-
-### 1. Pré-requisitos
-- Docker e Docker Compose v2 instalados
-- Portas livres: `3000`, `3001`, `8081-8083`, `5432`, `6379`
-
-### 2. Setup
+Execute as migrations:
 ```bash
-# clone do repo
-git clone <repo_url>
-cd user-profile-app
-
-# criar arquivo de variáveis
-cp .env.example .env
+npm run migrate
 ```
 
-### 3. Subir containers
+### Backend
 ```bash
-docker compose up --build
+cd packages/api-node
+npm install
+npm run dev
 ```
 
-### 4. Acessos
-- **Frontend** → http://localhost:3000  
-- **API Gateway (health)** → http://localhost:3001/health  
-- **Swagger (API)** → http://localhost:3001/docs  
-- **WebSocket** → ws://localhost:8083/ws  
-
----
-
-## 🔑 Fluxo da aplicação
-
-1. **Registrar** usuário em `/register`  
-   → salva em `auth-service` + `users` no Postgres  
-2. **Login** em `/login`  
-   → gera JWT armazenado no `localStorage` do frontend  
-3. **Feed** (`/feed`)  
-   - Criar posts (persistidos no `post-service`)  
-   - Curtir/descurtir posts (toggle com likes)  
-   - Atualização **em tempo real** via WebSocket  
-4. **Perfil** (`/profile`)  
-   - Editar `bio` e `avatar` → persiste no `profile-service`  
-
----
-
-## 🧪 Testes
-
-### Node (API Gateway)
+### Frontend
 ```bash
-docker compose run --rm api-node npm test
+cd packages/frontend-nextjs
+npm install
+npm run dev
 ```
 
-### Go (exemplo auth-service)
+Acesse em: `http://localhost:3000`
+
+## ✅ Testes
 ```bash
-docker compose run --rm auth-service go test ./...
+npm run test
 ```
-
----
-
-## 🛠️ Comandos úteis
-
-- Subir com rebuild forçado:
-```bash
-docker compose build --no-cache
-docker compose up
-```
-
-- Derrubar containers + volumes (resetar banco/redis):
-```bash
-docker compose down -v
-```
-
-- Ver logs de um serviço específico:
-```bash
-docker compose logs -f api-node
-docker compose logs -f post-service
-```
-
----
-
-## 🗄️ Banco de Dados
-
-O Postgres é inicializado com `ops/db/init.sql`, criando:
-- `users` → id, email, password_hash, display_name  
-- `profiles` → id, user_id, bio, avatar_url  
-- `posts` → id, user_id, content  
-- `likes` → relação N:N usuário ↔ post  
-
----
-
-## 📡 API Endpoints (via Gateway)
-
-- **Auth**  
-  - `POST /api/auth/register`  
-  - `POST /api/auth/login`  
-
-- **Profiles**  
-  - `GET /api/profiles/me`  
-  - `PUT /api/profiles/me`  
-
-- **Posts**  
-  - `GET /api/posts`  
-  - `POST /api/posts`  
-  - `POST /api/posts/:id/like`  
-
-> Documentação detalhada em **Swagger**: [http://localhost:3001/docs](http://localhost:3001/docs)
-
----
-
-## 🔮 Extras Implementados
-
-- **Service Worker** → cache de feed/perfil offline  
-- **Cache Redis** → para listagem de posts (invalida em criação/like)  
-- **WebSocket** → notificações de post/like em tempo real  
-- **Segurança** → bcrypt configurável (`BCRYPT_COST`), JWT HS256, Helmet, CORS restrito  
-
----
-
-## 📌 Roadmap futuro (melhorias possíveis)
-
-- Rate limiting + request-id no Gateway  
-- Observabilidade → Prometheus/Grafana ou Loki para logs  
-- Autenticação centralizada via introspection no `auth-service`  
-- CI/CD com testes automáticos antes do deploy  
