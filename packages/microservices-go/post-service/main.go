@@ -51,13 +51,24 @@ func (a *App) ws(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 
 func (a *App) listPosts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	ctx := context.Background()
+	feedFor := r.URL.Query().Get("feedFor")
 	key := "posts:latest"
+	if feedFor != "" { key = "posts:latest:for:" + feedFor }
 	if cached, err := a.Rdb.Get(ctx, key).Bytes(); err == nil {
 		w.Header().Set("Content-Type", "application/json"); w.Write(cached); return
 	}
-	rows, err := a.DB.Query(ctx, `SELECT p.id, p.user_id, p.content, p.created_at, COALESCE(l.count,0) FROM posts p
-		LEFT JOIN (SELECT post_id, COUNT(*) as count FROM likes GROUP BY post_id) l ON p.id=l.post_id
-		ORDER BY p.created_at DESC LIMIT 50`)
+	var rows pgxpool.Rows
+	var err error
+	if feedFor == "" {
+		rows, err = a.DB.Query(ctx, `SELECT p.id, p.user_id, p.content, p.created_at, COALESCE(l.count,0) FROM posts p
+			LEFT JOIN (SELECT post_id, COUNT(*) as count FROM likes GROUP BY post_id) l ON p.id=l.post_id
+			ORDER BY p.created_at DESC LIMIT 50`)
+	} else {
+		rows, err = a.DB.Query(ctx, `SELECT p.id, p.user_id, p.content, p.created_at, COALESCE(l.count,0) FROM posts p
+			LEFT JOIN (SELECT post_id, COUNT(*) as count FROM likes GROUP BY post_id) l ON p.id=l.post_id
+			WHERE p.user_id IN (SELECT followee_id FROM follows WHERE follower_id=$1)
+			ORDER BY p.created_at DESC LIMIT 50`, feedFor)
+	}
 	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 	var out []Post
@@ -95,11 +106,65 @@ func (a *App) likeToggle(w http.ResponseWriter, r *http.Request, ps httprouter.P
 	} else {
 		_, _ = a.DB.Exec(ctx, `INSERT INTO likes (user_id, post_id) VALUES ($1,$2)`, req.UserID, postID)
 	}
-	// bust + broadcast
+	// bust + broadcast + notify post owner
 	a.Rdb.Del(ctx, "posts:latest")
+	// find post owner
+	var owner string
+	a.DB.QueryRow(ctx, `SELECT user_id FROM posts WHERE id=$1`, postID).Scan(&owner)
+	if owner != "" && owner != req.UserID {
+		nid := uuid.NewString()
+		payload, _ := json.Marshal(map[string]any{"postId": postID, "from": req.UserID})
+		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "like", payload)
+	}
 	msg, _ := json.Marshal(map[string]any{"type":"post_liked","postId":postID,"userId":req.UserID})
 	a.Hub.broadcast <- msg
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (a *App) addComment(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	postID := ps.ByName("id")
+	var req struct{ UserID, Content string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, err.Error(), 400); return }
+	if req.UserID == "" || req.Content == "" { http.Error(w, "missing fields", 400); return }
+	ctx := context.Background()
+	id := uuid.NewString()
+	if _, err := a.DB.Exec(ctx, `INSERT INTO comments (id, post_id, user_id, content) VALUES ($1,$2,$3,$4)`, id, postID, req.UserID, req.Content); err != nil { http.Error(w, err.Error(), 500); return }
+	// bust cache + notify owner
+	a.Rdb.Del(ctx, "posts:latest")
+	var owner string
+	a.DB.QueryRow(ctx, `SELECT user_id FROM posts WHERE id=$1`, postID).Scan(&owner)
+	if owner != "" && owner != req.UserID {
+		nid := uuid.NewString()
+		payload, _ := json.Marshal(map[string]any{"postId": postID, "commentId": id, "from": req.UserID})
+		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "comment", payload)
+	}
+	msg, _ := json.Marshal(map[string]any{"type":"post_commented","postId":postID,"commentId":id,"userId":req.UserID})
+	a.Hub.broadcast <- msg
+	json.NewEncoder(w).Encode(map[string]string{"id": id})
+}
+
+func (a *App) listNotifications(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	userID := ps.ByName("id")
+	ctx := context.Background()
+	rows, err := a.DB.Query(ctx, `SELECT id, type, payload, read, created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`, userID)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id string; var ntype string; var payload []byte; var read bool; var createdAt time.Time
+		if err := rows.Scan(&id, &ntype, &payload, &read, &createdAt); err == nil {
+			var p any; json.Unmarshal(payload, &p)
+			out = append(out, map[string]any{"id": id, "type": ntype, "payload": p, "read": read, "createdAt": createdAt})
+		}
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+func (a *App) markNotificationRead(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	id := ps.ByName("id")
+	ctx := context.Background()
+	if _, err := a.DB.Exec(ctx, `UPDATE notifications SET read=true WHERE id=$1`, id); err != nil { http.Error(w, err.Error(), 500); return }
+	w.WriteHeader(204)
 }
 
 func main() {
@@ -116,7 +181,10 @@ func main() {
 	r.GET("/posts", app.listPosts)
 	r.POST("/posts", app.createPost)
 	r.POST("/posts/:id/like", app.likeToggle)
+	r.POST("/posts/:id/comments", app.addComment)
 	r.GET("/ws", app.ws)
+	r.GET("/notifications/:id", app.listNotifications)
+	r.POST("/notifications/:id/read", app.markNotificationRead)
 
 	log.Println("post-service listening :8083")
 	http.ListenAndServe(":8083", r)

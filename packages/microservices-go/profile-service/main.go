@@ -68,6 +68,40 @@ func (a *App) putProfile(w http.ResponseWriter, r *http.Request, ps httprouter.P
     json.NewEncoder(w).Encode(p)
 }
 
+func (a *App) addFollow(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	followee := ps.ByName("id")
+	var req struct{ FollowerId string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, err.Error(), 400); return }
+	if req.FollowerId == "" || followee == "" { http.Error(w, "missing fields", 400); return }
+	ctx := context.Background()
+	if _, err := a.DB.Exec(ctx, `INSERT INTO follows (follower_id, followee_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, req.FollowerId, followee); err != nil { http.Error(w, err.Error(), 500); return }
+	w.WriteHeader(204)
+}
+
+func (a *App) removeFollow(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	followee := ps.ByName("id")
+	var req struct{ FollowerId string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, err.Error(), 400); return }
+	if req.FollowerId == "" || followee == "" { http.Error(w, "missing fields", 400); return }
+	ctx := context.Background()
+	if _, err := a.DB.Exec(ctx, `DELETE FROM follows WHERE follower_id=$1 AND followee_id=$2`, req.FollowerId, followee); err != nil { http.Error(w, err.Error(), 500); return }
+	w.WriteHeader(204)
+}
+
+func (a *App) listFollowing(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	userId := ps.ByName("id")
+	ctx := context.Background()
+	rows, err := a.DB.Query(ctx, `SELECT u.id, u.email, u.display_name FROM users u JOIN follows f ON u.id=f.followee_id WHERE f.follower_id=$1`, userId)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	out := []map[string]string{}
+	for rows.Next() {
+		var id, email, display string
+		if err := rows.Scan(&id, &email, &display); err == nil { out = append(out, map[string]string{"id":id,"email":email,"displayName":display}) }
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
 
 func main() {
 	dsn := "postgres://"+os.Getenv("DB_USER")+":"+os.Getenv("DB_PASSWORD")+"@"+os.Getenv("DB_HOST")+":"+os.Getenv("DB_PORT")+"/"+os.Getenv("DB_NAME")

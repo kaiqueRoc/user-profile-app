@@ -1,5 +1,7 @@
 import type { AppProps } from 'next/app';
 import { useEffect } from 'react';
+import '../styles/global.css';
+import Layout from '../components/Layout';
 
 export default function MyApp({ Component, pageProps }: AppProps) {
   useEffect(() => {
@@ -7,5 +9,9 @@ export default function MyApp({ Component, pageProps }: AppProps) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
   }, []);
-  return <Component {...pageProps} />;
+  return (
+    <Layout>
+      <Component {...pageProps} />
+    </Layout>
+  );
 }

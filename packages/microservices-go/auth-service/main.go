@@ -78,6 +78,27 @@ func (a *App) handleValidate(w http.ResponseWriter, r *http.Request, _ httproute
 	json.NewEncoder(w).Encode(map[string]any{"valid": true})
 }
 
+func (a *App) handleSearchUsers(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	q := r.URL.Query().Get("query")
+	ctx := context.Background()
+	if q == "" {
+		json.NewEncoder(w).Encode([]map[string]string{})
+		return
+	}
+	like := "%" + q + "%"
+	rows, err := a.DB.Query(ctx, `SELECT id, email, display_name FROM users WHERE email ILIKE $1 OR display_name ILIKE $1 LIMIT 50`, like)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	out := []map[string]string{}
+	for rows.Next() {
+		var id, email, display string
+		if err := rows.Scan(&id, &email, &display); err == nil {
+			out = append(out, map[string]string{"id": id, "email": email, "displayName": display})
+		}
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
 func main() {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" { log.Fatal("JWT_SECRET required") }

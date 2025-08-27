@@ -34,6 +34,13 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.post('/api/auth/register', async (req, res, next) => {
   try {
     const { data } = await axios.post(`${AUTH_SERVICE_URL}/register`, req.body);
+    // create an empty profile for the user so profile-service will return data
+    try {
+      await axios.put(`${PROFILE_SERVICE_URL}/profiles/${data.id}`, { bio: '', avatarUrl: '' });
+    } catch (err) {
+      console.warn('create profile fallback failed', String(err));
+      // don't fail the registration if profile creation fails
+    }
     res.status(201).json(data);
   } catch (err) { next(err); }
 });
@@ -77,8 +84,10 @@ app.put('/api/profiles/me', authMiddleware, async (req: any, res, next) => {
 // Posts
 app.get('/api/posts', async (_req, res, next) => {
   try {
-    const { data } = await axios.get(`${POST_SERVICE_URL}/posts`);
-    res.json(data);
+  const feedFor = _req.query.feedFor;
+  const url = feedFor ? `${POST_SERVICE_URL}/posts?feedFor=${encodeURIComponent(String(feedFor))}` : `${POST_SERVICE_URL}/posts`;
+  const { data } = await axios.get(url);
+  res.json(data);
   } catch (err) { next(err); }
 });
 
@@ -89,10 +98,61 @@ app.post('/api/posts', authMiddleware, async (req: any, res, next) => {
   } catch (err) { next(err); }
 });
 
+app.post('/api/posts/:id/comments', authMiddleware, async (req: any, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data } = await axios.post(`${POST_SERVICE_URL}/posts/${id}/comments`, { userId: req.user.id, content: req.body.content });
+    res.status(201).json(data);
+  } catch (err) { next(err); }
+});
+
+app.get('/api/notifications/:id', authMiddleware, async (req: any, res, next) => {
+  try {
+    const { data } = await axios.get(`${POST_SERVICE_URL}/notifications/${req.params.id}`);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+app.post('/api/notifications/:id/read', authMiddleware, async (req: any, res, next) => {
+  try {
+    await axios.post(`${POST_SERVICE_URL}/notifications/${req.params.id}/read`);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+// follow/unfollow
+app.post('/api/profiles/:id/follow', async (req, res, next) => {
+  try {
+    const { data } = await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/follow`, { followerId: req.body.followerId });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+app.post('/api/profiles/:id/unfollow', async (req, res, next) => {
+  try {
+    const { data } = await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/unfollow`, { followerId: req.body.followerId });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+app.get('/api/profiles/:id/following', async (req, res, next) => {
+  try {
+    const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
 app.post('/api/posts/:id/like', authMiddleware, async (req: any, res, next) => {
   try {
     const { id } = req.params;
     const { data } = await axios.post(`${POST_SERVICE_URL}/posts/${id}/like`, { userId: req.user.id });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Users search
+app.get('/api/users', async (req, res, next) => {
+  try {
+    const q = req.query.query || '';
+    const { data } = await axios.get(`${AUTH_SERVICE_URL}/users?query=${encodeURIComponent(String(q))}`);
     res.json(data);
   } catch (err) { next(err); }
 });
