@@ -106,6 +106,25 @@ app.post('/api/posts/:id/comments', authMiddleware, async (req: any, res, next) 
   } catch (err) { next(err); }
 });
 
+// Delete post (only owner) - proxied
+app.delete('/api/posts/:id', authMiddleware, async (req: any, res, next) => {
+  try {
+    await axios.delete(`${POST_SERVICE_URL}/posts/${req.params.id}`, { data: { userId: req.user.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+// Check if current user follows another user
+app.get('/api/profiles/:id/is-following', authMiddleware, async (req: any, res, next) => {
+  try {
+    const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
+    // data is a list of user ids who follow the profile? If profile-service returns follows, adapt accordingly
+    // We'll check presence of req.user.id in the returned list
+    const isFollowing = Array.isArray(data) ? data.includes(req.user.id) : false;
+    res.json({ isFollowing });
+  } catch (err) { next(err); }
+});
+
 app.get('/api/notifications/:id', authMiddleware, async (req: any, res, next) => {
   try {
     const { data } = await axios.get(`${POST_SERVICE_URL}/notifications/${req.params.id}`);

@@ -13,7 +13,9 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@types/react": "19.1.11",
     "@types/swagger-ui-express": "^4.1.8",
-    "@types/yamljs": "^0.2.34"
+    "@types/yamljs": "^0.2.34",
+    "typescript": "5.9.2"
   }
 }

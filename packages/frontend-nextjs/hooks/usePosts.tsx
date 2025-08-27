@@ -5,7 +5,7 @@ const getApi = () => (typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_A
 let cache: any = { posts: null };
 
 export default function usePosts(initialFeedFor?: string) {
-  const [posts, setPosts] = useState(cache.posts || []);
+  const [posts, setPosts] = useState<any[]>(() => cache.posts || []);
   const [loading, setLoading] = useState(false);
   const wsRef = useRef<any>(null);
   const feedFor = initialFeedFor || '';
@@ -41,9 +41,19 @@ export default function usePosts(initialFeedFor?: string) {
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data);
-          if (msg.type === 'post_created' || msg.type === 'post_liked' || msg.type === 'post_commented') {
-            // refresh from server
-            load();
+          // incremental updates to avoid full reload
+          if (msg.type === 'post_created' && msg.post) {
+            cache.posts = [msg.post, ...(cache.posts || [])];
+            setPosts(prev => [msg.post, ...prev]);
+          } else if (msg.type === 'post_liked' && msg.postId) {
+            cache.posts = (cache.posts || []).map((p:any) => p.id === msg.postId ? { ...p, likes: (p.likes||0) + 1 } : p);
+            setPosts(prev => prev.map(p => p.id === msg.postId ? { ...p, likes: (p.likes||0) + 1 } : p));
+          } else if (msg.type === 'post_deleted' && msg.postId) {
+            cache.posts = (cache.posts || []).filter((p:any) => p.id !== msg.postId);
+            setPosts(prev => prev.filter(p => p.id !== msg.postId));
+          } else if (msg.type === 'post_commented' && msg.postId) {
+            // refresh that post or do nothing — we'll optimistically reload comments elsewhere
+            // here we just keep posts as-is
           }
         } catch (e) { /* ignore */ }
       };
@@ -55,11 +65,11 @@ export default function usePosts(initialFeedFor?: string) {
   const create = async (content: string, token?: string) => {
     if (!content || !token) return null;
     const API = getApi();
-    // optimistic
-    const tempId = 'temp-' + Date.now();
-    const tmp = { id: tempId, userId: '', content, createdAt: new Date().toISOString(), likes: 0 };
-    cache.posts = [tmp, ...(cache.posts || [])];
-    setPosts(cache.posts);
+  // optimistic
+  const tempId = 'temp-' + Date.now();
+  const tmp = { id: tempId, userId: '', content, createdAt: new Date().toISOString(), likes: 0 };
+  cache.posts = [tmp, ...(cache.posts || [])];
+  setPosts(prev => [tmp, ...prev]);
     try {
       const res = await fetch(`${API}/api/posts`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ content }) });
       if (res.ok) {
@@ -67,7 +77,7 @@ export default function usePosts(initialFeedFor?: string) {
         if (body && body.id) {
           // replace temp
           cache.posts = (cache.posts || []).map((p:any)=> p.id===tempId ? { ...p, id: body.id } : p);
-          setPosts(cache.posts);
+          setPosts(prev => prev.map((p:any)=> p.id===tempId ? { ...p, id: body.id } : p));
         }
       } else {
         // remove temp
@@ -85,8 +95,8 @@ export default function usePosts(initialFeedFor?: string) {
     if (!id || !token) return;
     const API = getApi();
     // optimistic update: increment locally
-    cache.posts = (cache.posts || []).map((p:any) => p.id===id ? { ...p, likes: (p.likes||0)+1 } : p);
-    setPosts(cache.posts);
+  cache.posts = (cache.posts || []).map((p:any) => p.id===id ? { ...p, likes: (p.likes||0)+1 } : p);
+  setPosts(prev => prev.map(p => p.id===id ? { ...p, likes: (p.likes||0)+1 } : p));
     try {
       await fetch(`${API}/api/posts/${id}/like`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({}) });
     } catch (e) { /* ignore */ }
