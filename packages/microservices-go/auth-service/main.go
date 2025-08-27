@@ -117,6 +117,8 @@ func main() {
 	router.POST("/register", app.handleRegister)
 	router.POST("/login", app.handleLogin)
 	router.GET("/validate", app.handleValidate)
+	// expose user search for other services / UI
+	router.GET("/users", app.handleSearchUsers)
 	log.Println("auth-service listening :8081")
 	http.ListenAndServe(":8081", router)
 }

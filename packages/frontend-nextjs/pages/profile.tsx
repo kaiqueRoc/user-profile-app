@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-
-const getApi = () => (typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '');
+import { getApi } from '../utils/api';
 
 export default function Profile() {
   const [bio, setBio] = useState('');
@@ -26,8 +25,9 @@ export default function Profile() {
       const res = await fetch(`${API}/api/profiles/me`, { headers: { Authorization: `Bearer ${tkn}` } });
       if (res.ok) {
         const data = await res.json();
-        setBio(data.bio || '');
-        setAvatarUrl(data.avatarUrl || '');
+  setBio(data.bio || '');
+  setAvatarUrl(data.avatarUrl || '');
+  try { localStorage.setItem('profile', JSON.stringify(data)); } catch(e) {}
       }
     } catch (err) {
       // ignore
@@ -48,7 +48,8 @@ export default function Profile() {
       setMessage(res.ok ? 'Salvo!' : 'Erro ao salvar');
       if (res.ok) {
         // refresh from server to ensure stored value is shown
-        await fetchProfile(token);
+  await fetchProfile(token);
+  try { const updated = await fetch(`${API}/api/profiles/me`, { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json()).catch(()=>null); if (updated) localStorage.setItem('profile', JSON.stringify(updated)); } catch(e) {}
       }
     } catch (e) {
       setMessage('Erro ao salvar');

@@ -22,6 +22,12 @@ body{
 .brand{display:flex;align-items:center;gap:12px}
 .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-weight:700}
 .nav a{color:var(--muted);text-decoration:none;margin-left:12px}
+.nav .notif-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:8px;background:transparent;border:none;color:var(--text);cursor:pointer}
+.notif-badge{position:absolute;top:-6px;right:-6px;background:#ff4d4d;color:#fff;border-radius:12px;padding:2px 6px;font-size:12px;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,0.6)}
+.notif-dropdown{position:absolute;right:20px;top:60px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:12px;width:320px;box-shadow:0 12px 40px rgba(2,6,23,0.6);z-index:40}
+.notif-item{padding:10px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02);}
+.notif-item.unread{border-left:4px solid var(--accent)}
+.notif-item .meta{font-size:12px;color:var(--muted);margin-top:6px}
 h1{margin:0 0 12px 0}
 form input, form textarea{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text);margin-bottom:10px}
 button.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:white;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}

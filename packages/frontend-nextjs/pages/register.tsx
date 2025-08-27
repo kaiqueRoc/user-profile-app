@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
-const getApi = () => (typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '');
+import { getApi } from '../utils/api';
 
 export default function Register() {
   const [email, setEmail] = useState('');

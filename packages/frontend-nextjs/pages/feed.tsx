@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import usePosts from '../hooks/usePosts';
+import { getApi } from '../utils/api';
 
 type Post = { id: string; userId: string; content: string; createdAt: string; likes: number };
 
 export default function Feed() {
-  const { posts, load, create, like, comment, loading } = usePosts();
+  const profile = (typeof window !== 'undefined') ? ((() => { try { return JSON.parse(localStorage.getItem('profile')||'null'); } catch(e){ return null; } })()) : null;
+  const feedFor = profile?.userId || '';
+  const { posts, load, create, like, comment, loading } = usePosts(feedFor);
   const [content, setContent] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const router = useRouter();
 
   const [query, setQuery] = useState('');
@@ -27,7 +31,7 @@ export default function Feed() {
   const search = async (e?: unknown) => {
     // prevent form submit default if called from form
     try { (e as any)?.preventDefault?.(); } catch (err) {}
-    const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
     if (!query || query.trim().length < 2) { setResults([]); return; }
     try {
       const res = await fetch(`${API}/api/users?query=${encodeURIComponent(query)}`);
@@ -37,7 +41,7 @@ export default function Feed() {
 
   const toggleFollow = (id: string) => {
     (async () => {
-      const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
       const tok = localStorage.getItem('token');
       if (!tok) return alert('Faça login');
       if (following.includes(id)) {
@@ -60,7 +64,7 @@ export default function Feed() {
     (async () => {
       // fetch current profile
       try {
-        const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
         const res = await fetch(`${API}/api/profiles/me`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
         if (res.ok) { const data = await res.json(); setMe(data); }
         // load initial following from server
@@ -83,11 +87,43 @@ export default function Feed() {
     setShowNotifications(s => !s);
     if (!showNotifications) {
       try {
-        const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
         const res = await fetch(`${API}/api/notifications/${me.userId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-        if (res.ok) setNotifications(await res.json());
+        if (res.ok) {
+            const list = await res.json();
+            setNotifications(list);
+            const unread = Array.isArray(list) ? list.filter((n:any) => !n.read).length : 0;
+            setUnreadCount(unread);
+            try { localStorage.setItem('notifications_unread', String(unread)); } catch (e) {}
+          }
       } catch (e) {}
     }
+  };
+
+  const formatNotification = (n: any) => {
+    try {
+      const p = n.payload || {};
+      const from = p.from || p.displayName || 'Alguém';
+      if (n.type === 'like') return `${from} curtiu seu post`;
+      if (n.type === 'comment') return `${from} comentou seu post`;
+      if (n.type === 'follow') return `${from} começou a seguir você`;
+      return typeof p === 'object' ? JSON.stringify(p) : String(p);
+    } catch (e) { return '' }
+  };
+
+  const markAllAsRead = async () => {
+    if (!me) return;
+  const API = getApi();
+    const tok = localStorage.getItem('token');
+      try {
+      const toMark = notifications.filter(n => !n.read).map(n => n.id);
+      await Promise.all(toMark.map(id => fetch(`${API}/api/notifications/${id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` } })));
+      // update locally
+      const updated = notifications.map(n => ({ ...n, read: true }));
+      setNotifications(updated);
+      setUnreadCount(0);
+      try { localStorage.setItem('notifications_unread', '0'); } catch (e) {}
+    } catch (e) { /* ignore */ }
   };
 
   const createPost = async () => { if (!token) { alert('Faça login'); return; } await create(content, token || undefined); setContent(''); };
@@ -106,7 +142,7 @@ export default function Feed() {
   const doDelete = async (postId: string) => {
     if (!token) return alert('Faça login');
     if (!confirm('Remover este post?')) return;
-    const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
     await fetch(`${API}/api/posts/${postId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
     // refresh
     await load();
@@ -114,7 +150,7 @@ export default function Feed() {
 
   const canComment = async (ownerId: string) => {
     if (!token) return false;
-    const API = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '';
+  const API = getApi();
     try {
       const res = await fetch(`${API}/api/profiles/${ownerId}/is-following`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return false;
@@ -127,19 +163,34 @@ export default function Feed() {
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <h1>Feed</h1>
         <div>
-          <button onClick={toggleNotifications} style={{position:'relative'}} aria-label="Notifications">🔔</button>
+          <button onClick={toggleNotifications} style={{position:'relative'}} aria-label="Notifications">🔔
+            {unreadCount > 0 && (
+              <span style={{position:'absolute', top:-6, right:-6, background:'#ff4d4d', color:'#fff', borderRadius:12, padding:'2px 6px', fontSize:12}} aria-hidden>{unreadCount}</span>
+            )}
+          </button>
         </div>
       </div>
       {showNotifications && (
-        <div style={{position:'absolute',right:20,top:60,background:'#222',padding:12,borderRadius:6,width:300}}>
-          <h4>Notificações</h4>
-          {notifications.length === 0 && <div className="muted">Sem notificações</div>}
-          {notifications.map(n => (
-            <div key={n.id} style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
-              <div style={{fontWeight:700}}>{String(n.type)}</div>
-              <div style={{fontSize:12}}>{JSON.stringify(n.payload)}</div>
+        <div style={{position:'absolute',right:20,top:60,background:'#222',padding:12,borderRadius:6,width:320}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <h4 style={{margin:0}}>Notificações</h4>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              {unreadCount > 0 && <div style={{fontSize:12,color:'#fff',opacity:.8}}>{unreadCount} não-lida(s)</div>}
+              <button onClick={markAllAsRead} className="primary" style={{fontSize:12,padding:'6px 8px'}}>Marcar tudo como lido</button>
             </div>
-          ))}
+          </div>
+          <div style={{marginTop:8}}>
+            {notifications.length === 0 && <div className="muted">Sem notificações</div>}
+            {notifications.map(n => (
+              <div key={n.id} style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.03)', opacity: n.read ? .6 : 1}}>
+                <div style={{fontWeight:700}}>{String(n.type)}</div>
+                <div style={{fontSize:12}}>{formatNotification(n)}</div>
+                <div style={{marginTop:6,display:'flex',gap:8}}>
+                  {!n.read && <button style={{fontSize:12}} onClick={async () => { const API_LOCAL = getApi(); await fetch(`${API_LOCAL}/api/notifications/${n.id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }); setNotifications(notifications.map(x=> x.id===n.id ? { ...x, read: true } : x)); setUnreadCount(c => Math.max(0, c-1)); try { localStorage.setItem('notifications_unread', String(Math.max(0, (parseInt(localStorage.getItem('notifications_unread')||'0',10)||0)-1))); } catch(e){} }}>Marcar como lido</button>}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <div style={{marginBottom: 16}}>
@@ -198,7 +249,7 @@ function CommentBox({ ownerId, postId, canCommentFn, token, onCommented }: any) 
   const submit = async () => {
     if (!token) return alert('Login necessário');
     if (!allowed) return alert('Somente amigos podem comentar');
-    await fetch(`${(process.env.NEXT_PUBLIC_API_URL as string)}/api/posts/${postId}/comments`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ content: text }) });
+  await fetch(`${getApi()}/api/posts/${postId}/comments`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ content: text }) });
     setText(''); onCommented?.();
   };
   if (allowed === null) return null;

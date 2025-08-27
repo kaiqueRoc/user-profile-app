@@ -117,11 +117,10 @@ app.delete('/api/posts/:id', authMiddleware, async (req: any, res, next) => {
 // Check if current user follows another user
 app.get('/api/profiles/:id/is-following', authMiddleware, async (req: any, res, next) => {
   try {
-    const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
-    // data is a list of user ids who follow the profile? If profile-service returns follows, adapt accordingly
-    // We'll check presence of req.user.id in the returned list
-    const isFollowing = Array.isArray(data) ? data.includes(req.user.id) : false;
-    res.json({ isFollowing });
+  const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
+  // profile-service returns an array of user objects { id, email, displayName }
+  const isFollowing = Array.isArray(data) ? data.some((u: any) => u.id === req.user.id) : false;
+  res.json({ isFollowing });
   } catch (err) { next(err); }
 });
 
@@ -140,15 +139,18 @@ app.post('/api/notifications/:id/read', authMiddleware, async (req: any, res, ne
 });
 
 // follow/unfollow
-app.post('/api/profiles/:id/follow', async (req, res, next) => {
+// Require auth for follow/unfollow and use requester's user id when possible
+app.post('/api/profiles/:id/follow', authMiddleware, async (req: any, res, next) => {
   try {
-    const { data } = await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/follow`, { followerId: req.body.followerId });
+    const follower = req.user.id || req.body.followerId;
+    await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/follow`, { followerId: follower });
     res.status(204).end();
   } catch (err) { next(err); }
 });
-app.post('/api/profiles/:id/unfollow', async (req, res, next) => {
+app.post('/api/profiles/:id/unfollow', authMiddleware, async (req: any, res, next) => {
   try {
-    const { data } = await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/unfollow`, { followerId: req.body.followerId });
+    const follower = req.user.id || req.body.followerId;
+    await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/unfollow`, { followerId: follower });
     res.status(204).end();
   } catch (err) { next(err); }
 });

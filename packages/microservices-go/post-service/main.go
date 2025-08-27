@@ -116,6 +116,9 @@ func (a *App) likeToggle(w http.ResponseWriter, r *http.Request, ps httprouter.P
 		nid := uuid.NewString()
 		payload, _ := json.Marshal(map[string]any{"postId": postID, "from": req.UserID})
 		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "like", payload)
+		// broadcast notification event so clients can update badge in realtime
+		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":map[string]any{"postId": postID, "from": req.UserID}})
+		a.Hub.broadcast <- notifMsg
 	}
 	msg, _ := json.Marshal(map[string]any{"type":"post_liked","postId":postID,"userId":req.UserID})
 	a.Hub.broadcast <- msg
@@ -149,6 +152,9 @@ func (a *App) addComment(w http.ResponseWriter, r *http.Request, ps httprouter.P
 		nid := uuid.NewString()
 		payload, _ := json.Marshal(map[string]any{"postId": postID, "commentId": id, "from": req.UserID})
 		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "comment", payload)
+		// broadcast notification event so clients can update badge in realtime
+		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":map[string]any{"postId": postID, "commentId": id, "from": req.UserID}})
+		a.Hub.broadcast <- notifMsg
 	}
 	msg, _ := json.Marshal(map[string]any{"type":"post_commented","postId":postID,"commentId":id,"userId":req.UserID})
 	a.Hub.broadcast <- msg

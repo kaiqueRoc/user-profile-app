@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-// read API at runtime to avoid SSR/runtime mismatch
-const getApi = () => (typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '');
+import { getApi } from '../utils/api';
 import { useRouter } from 'next/router';
 
 export default function Login() {
@@ -31,8 +30,14 @@ export default function Login() {
       if (!res.ok) { setErr('Credenciais inválidas'); setLoading(false); return; }
       const data = await res.json();
       localStorage.setItem('token', data.token);
+      try {
+        // fetch profile and store locally for header and other components
+        const API = getApi();
+        const p = await fetch(`${API}/api/profiles/me`, { headers: { Authorization: `Bearer ${data.token}` } }).then(r=>r.json()).catch(()=>null);
+        if (p) try { localStorage.setItem('profile', JSON.stringify(p)); } catch(e) {}
+      } catch (e) {}
   setEmail(''); setPassword('');
-      router.push('/feed');
+      router.push('/');
     } catch (err) {
       setErr('Erro ao conectar');
       setLoading(false);

@@ -112,6 +112,10 @@ func main() {
 	r := httprouter.New()
 	r.GET("/profiles/:id", app.getProfile)
 	r.PUT("/profiles/:id", app.putProfile)
+	// follow management
+	r.POST("/profiles/:id/follow", app.addFollow)
+	r.POST("/profiles/:id/unfollow", app.removeFollow)
+	r.GET("/profiles/:id/following", app.listFollowing)
 	log.Println("profile-service listening :8082")
 	http.ListenAndServe(":8082", r)
 }

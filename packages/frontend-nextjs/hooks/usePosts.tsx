@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-
-const getApi = () => (typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL as string) : '');
+import { getApi, getWsUrl } from '../utils/api';
 
 let cache: any = { posts: null };
 
@@ -33,9 +32,9 @@ export default function usePosts(initialFeedFor?: string) {
   useEffect(() => {
     // initialize
     if (!cache.posts) load();
-    // websocket
-    const wsUrl = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_WS_URL as any) : null;
-    if (!wsUrl || typeof wsUrl !== 'string') return;
+  // websocket (centralized helper)
+  const wsUrl = typeof window !== 'undefined' ? getWsUrl() : null;
+  if (!wsUrl) return;
     try {
       const ws = new WebSocket(wsUrl);
       ws.onmessage = (evt) => {
