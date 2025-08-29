@@ -1,0 +1,150 @@
+{
+  "info": {
+    "name": "User Profile App - Full Collection",
+    "_postman_id": "11111111-2222-3333-4444-full-collection",
+    "description": "Coleção completa cobrindo todas as rotas do API Gateway. Scripts populam variáveis automaticamente (token, userId, lastPostId, etc). Importar em Postman e executar em sequência.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3001" },
+    { "key": "email", "value": "" },
+    { "key": "password", "value": "" },
+    { "key": "displayName", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "token", "value": "" },
+    { "key": "lastPostId", "value": "" },
+    { "key": "lastCommentId", "value": "" },
+    { "key": "avatarUrl", "value": "" },
+    { "key": "bio", "value": "Minha bio" },
+    { "key": "notificationId", "value": "" },
+    { "key": "followTargetId", "value": "" },
+    { "key": "searchQuery", "value": "test" },
+    { "key": "randomInt", "value": "0" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "// Prepara variáveis padrão se vazias",
+          "if (!pm.collectionVariables.get('baseUrl')) pm.collectionVariables.set('baseUrl','http://localhost:3001');",
+          "if (!pm.collectionVariables.get('email')) pm.collectionVariables.set('email', 'user'+Date.now()+'@test.local');",
+          "if (!pm.collectionVariables.get('password')) pm.collectionVariables.set('password', 'secret123');",
+          "if (!pm.collectionVariables.get('displayName')) pm.collectionVariables.set('displayName', 'User '+new Date().getSeconds());",
+          "pm.collectionVariables.set('randomInt', Math.floor(Math.random()*100000));"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] } },
+          "event": [ { "listen": "test", "script": { "exec": ["pm.test('Health OK', ()=> pm.expect(pm.response.code).to.equal(200));"], "type": "text/javascript" } } ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode":"raw","raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"displayName\": \"{{displayName}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api","auth","register"] }
+          },
+          "event": [ { "listen": "test", "script": { "exec": [
+            "let j;try{j=pm.response.json();}catch(e){}",
+            "if(j){ if(j.id) pm.collectionVariables.set('userId', j.id); if(j.token) pm.collectionVariables.set('token', j.token); if(j.email) pm.collectionVariables.set('email', j.email); if(j.displayName) pm.collectionVariables.set('displayName', j.displayName); pm.test('Register OK', ()=> pm.expect(pm.response.code).to.be.oneOf([200,201])); } else { pm.test('Sem JSON', ()=> pm.expect.fail('')); }"
+          ], "type": "text/javascript" } } ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode":"raw","raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api","auth","login"] }
+          },
+          "event": [ { "listen": "test", "script": { "exec": [
+            "let j;try{j=pm.response.json();}catch(e){}",
+            "if(j && j.token){ pm.collectionVariables.set('token', j.token); if(j.id) pm.collectionVariables.set('userId', j.id); if(j.displayName) pm.collectionVariables.set('displayName', j.displayName); pm.test('Login OK', ()=> pm.expect(pm.response.code).to.equal(200)); } else { pm.test('Login falhou', ()=> pm.expect.fail('no token')); }"
+          ], "type": "text/javascript" } } ]
+        }
+      ]
+    },
+    {
+      "name": "Profiles",
+      "item": [
+        {
+          "name": "Get Me",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/profiles/me", "host": ["{{baseUrl}}"], "path": ["api","profiles","me"] } },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": [
+              "let j;try{j=pm.response.json();}catch(e){}; if(j){ if(j.userId) pm.collectionVariables.set('userId', j.userId); if(j.displayName) pm.collectionVariables.set('displayName', j.displayName); if(j.avatarUrl) pm.collectionVariables.set('avatarUrl', j.avatarUrl); if(j.bio!==undefined) pm.collectionVariables.set('bio', j.bio); pm.test('Get me OK', ()=> pm.expect(pm.response.code).to.equal(200)); }"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "Update Me",
+          "request": { "method": "PUT", "header":[{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"bio\": \"{{bio}}\",\n  \"avatarUrl\": \"{{avatarUrl}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/profiles/me", "host": ["{{baseUrl}}"], "path": ["api","profiles","me"] } },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j){ if(j.avatarUrl) pm.collectionVariables.set('avatarUrl', j.avatarUrl); if(j.bio!==undefined) pm.collectionVariables.set('bio', j.bio); pm.test('Update me OK', ()=> pm.expect(pm.response.code).to.equal(200)); }"], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "Is Following (self->self always false)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/profiles/{{userId}}/is-following", "host": ["{{baseUrl}}"], "path": ["api","profiles","{{userId}}","is-following"] } },
+          "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ]
+        },
+        {
+          "name": "List Following",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/profiles/{{userId}}/following", "host": ["{{baseUrl}}"], "path": ["api","profiles","{{userId}}","following"] } }
+        },
+        {
+          "name": "Follow Target (set followTargetId first)",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/profiles/{{followTargetId}}/follow", "host": ["{{baseUrl}}"], "path": ["api","profiles","{{followTargetId}}","follow"] } },
+          "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ]
+        },
+        {
+          "name": "Unfollow Target",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/profiles/{{followTargetId}}/unfollow", "host": ["{{baseUrl}}"], "path": ["api","profiles","{{followTargetId}}","unfollow"] } },
+          "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ]
+        }
+      ]
+    },
+    {
+      "name": "Posts",
+      "item": [
+        { "name": "List Posts", "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/posts", "host": ["{{baseUrl}}"], "path": ["api","posts"] } } },
+        { "name": "Create Post", "request": { "method": "POST", "header":[{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"content\": \"Post teste {{randomInt}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/posts", "host": ["{{baseUrl}}"], "path": ["api","posts"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } }, { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j && j.id){ pm.collectionVariables.set('lastPostId', j.id); pm.test('Create post OK', ()=> pm.expect(pm.response.code).to.be.oneOf([200,201])); }"], "type":"text/javascript" } } ] },
+        { "name": "Update Post", "request": { "method": "PUT", "header":[{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"content\": \"Post atualizado {{randomInt}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ] },
+        { "name": "Like Toggle", "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/like", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","like"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ] },
+        { "name": "Create Comment", "request": { "method": "POST", "header":[{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"content\": \"Comentário {{randomInt}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/comments", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","comments"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } }, { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j && j.id){ pm.collectionVariables.set\n('lastCommentId', j.id); }"], "type":"text/javascript" } } ] },
+        { "name": "List Comments", "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/comments", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","comments"] } } },
+        { "name": "Delete Post", "request": { "method": "DELETE", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ] }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        { "name": "List Notifications", "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/notifications/{{userId}}", "host": ["{{baseUrl}}"], "path": ["api","notifications","{{userId}}"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ] },
+        { "name": "Mark Notification Read", "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/notifications/{{notificationId}}/read", "host": ["{{baseUrl}}"], "path": ["api","notifications","{{notificationId}}","read"] } }, "event": [ { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization',value:'Bearer '+pm.collectionVariables.get('token')});"], "type":"text/javascript" } } ] }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        { "name": "Search Users", "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/users?query={{searchQuery}}", "host": ["{{baseUrl}}"], "path": ["api","users"], "query": [ { "key": "query", "value": "{{searchQuery}}" } ] } } }
+      ]
+    }
+  ]
+}

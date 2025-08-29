@@ -1,25 +1,48 @@
 import { useEffect, useState } from 'react';
+import Swal from 'sweetalert2';
 import { useRouter } from 'next/router';
 import usePosts from '../hooks/usePosts';
-import { getApi } from '../utils/api';
+import { getApi, getWsUrl } from '../utils/api';
 
-type Post = { id: string; userId: string; content: string; createdAt: string; likes: number };
+type Post = { id: string; userId: string; content: string; createdAt: string; likes: number; comments?: number; authorName?: string; authorAvatarUrl?: string; repostedByName?: string; likedBy?: string[] };
+type Comment = { id:string; postId:string; userId:string; content:string; createdAt:string; authorName?: string };
 
 export default function Feed() {
   const profile = (typeof window !== 'undefined') ? ((() => { try { return JSON.parse(localStorage.getItem('profile')||'null'); } catch(e){ return null; } })()) : null;
   const feedFor = profile?.userId || '';
-  const { posts, load, create, like, comment, loading } = usePosts(feedFor);
+  const { posts, load, create, like, comment, update, remove, loading } = usePosts(feedFor);
   const [content, setContent] = useState('');
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const [composerSuccess, setComposerSuccess] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  async function repost(postId:string){ if(!token) return alert('Login necessário'); try{ const res = await fetch(`${getApi()}/api/posts/${postId}/repost`, { method:'POST', headers:{ Authorization:`Bearer ${token}` }}); if(res.ok){ await load(); } }catch(e){} }
+  async function submitReply(){ if(!replyFor || !replyText.trim() || !token) return; await comment(replyFor, replyText.trim(), token); setReplyOpen(replyFor, false);}
   const [me, setMe] = useState<any>(null);
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+
+  async function handleLikeHover(e:any, p:Post){
+    const users = await fetchLikedBy(p.id);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setLikeTooltip({postId:p.id, x:rect.left + rect.width/2, y:rect.top - 10, users});
+  }
+  function hideLikeHover(){ setLikeTooltip({postId:null,x:0,y:0,users:[]}); }
+  const [replyFor, setReplyFor] = useState<string|null>(null);
+  const [replyText, setReplyText] = useState('');
+  const setReplyOpen = (postId:string, open:boolean)=>{ setReplyFor(open?postId:null); if(!open) setReplyText(''); };
+  const [likeTooltip, setLikeTooltip] = useState<{postId:string|null;x:number;y:number;users:string[]}>({postId:null,x:0,y:0,users:[]});
+
+  async function fetchLikedBy(postId: string){
+    try{
+      const res = await fetch(`${getApi()}/api/posts/${postId}/likes`);
+      if(res.ok){ const data = await res.json(); return (data?.users||[]).map((u:any)=>u.displayName||u.name||u.email||'Usuário'); }
+    }catch(e){}
+    return [];
+  }
   const router = useRouter();
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Array<any>>([]);
   const [following, setFollowing] = useState<string[]>([]);
-  const [showNotifications, setShowNotifications] = useState(false);
+  // notifications handled globally in Layout now
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -35,7 +58,13 @@ export default function Feed() {
     if (!query || query.trim().length < 2) { setResults([]); return; }
     try {
       const res = await fetch(`${API}/api/users?query=${encodeURIComponent(query)}`);
-      if (res.ok) setResults(await res.json());
+      if (res.ok) {
+        const list = await res.json();
+        // remove o próprio usuário
+        const myId = me?.userId;
+        const filtered = Array.isArray(list) ? list.filter((u:any)=> u.id !== myId) : [];
+        setResults(filtered);
+      }
     } catch (e) { setResults([]); }
   };
 
@@ -44,6 +73,7 @@ export default function Feed() {
   const API = getApi();
       const tok = localStorage.getItem('token');
       if (!tok) return alert('Faça login');
+      if (me?.userId && me.userId === id) { return; } // não seguir a si mesmo
       if (following.includes(id)) {
         await fetch(`${API}/api/profiles/${id}/unfollow`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify({ followerId: me?.userId }) });
         const next = following.filter(x=>x!==id); setFollowing(next); localStorage.setItem('following', JSON.stringify(next));
@@ -64,13 +94,21 @@ export default function Feed() {
     (async () => {
       // fetch current profile
       try {
-  const API = getApi();
+        const API = getApi();
         const res = await fetch(`${API}/api/profiles/me`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-        if (res.ok) { const data = await res.json(); setMe(data); }
-        // load initial following from server
-        if (res.ok) {
+        if (res.status === 401) {
+          // Token inválido ou expirado
+          localStorage.removeItem('token');
+          localStorage.removeItem('profile');
+          router.push('/login');
+          return;
+        }
+        if (res.ok) { 
+          const data = await res.json(); 
+          setMe(data); 
+          // load initial following from server
           try {
-            const f = await fetch(`${API}/api/profiles/${(await res.json()).userId}/following`);
+            const f = await fetch(`${API}/api/profiles/${data.userId}/following`);
             if (f.ok) {
               const list = await f.json();
               const ids = Array.isArray(list) ? list.map((x:any) => x.id) : [];
@@ -78,27 +116,13 @@ export default function Feed() {
             }
           } catch (_) {}
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('Erro ao buscar perfil:', e);
+      }
     })();
   }, []);
 
-  const toggleNotifications = async () => {
-    if (!me) return;
-    setShowNotifications(s => !s);
-    if (!showNotifications) {
-      try {
-  const API = getApi();
-        const res = await fetch(`${API}/api/notifications/${me.userId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-        if (res.ok) {
-            const list = await res.json();
-            setNotifications(list);
-            const unread = Array.isArray(list) ? list.filter((n:any) => !n.read).length : 0;
-            setUnreadCount(unread);
-            try { localStorage.setItem('notifications_unread', String(unread)); } catch (e) {}
-          }
-      } catch (e) {}
-    }
-  };
+  // removed toggleNotifications (centralized in Layout)
 
   const formatNotification = (n: any) => {
     try {
@@ -111,22 +135,17 @@ export default function Feed() {
     } catch (e) { return '' }
   };
 
-  const markAllAsRead = async () => {
-    if (!me) return;
-  const API = getApi();
-    const tok = localStorage.getItem('token');
-      try {
-      const toMark = notifications.filter(n => !n.read).map(n => n.id);
-      await Promise.all(toMark.map(id => fetch(`${API}/api/notifications/${id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` } })));
-      // update locally
-      const updated = notifications.map(n => ({ ...n, read: true }));
-      setNotifications(updated);
-      setUnreadCount(0);
-      try { localStorage.setItem('notifications_unread', '0'); } catch (e) {}
-    } catch (e) { /* ignore */ }
-  };
+  // removed markAllAsRead (centralized)
 
-  const createPost = async () => { if (!token) { alert('Faça login'); return; } await create(content, token || undefined); setContent(''); };
+  const createPost = async () => {
+    if (!token) { alert('Faça login'); return; }
+    if (!content.trim()) { setComposerError('Digite algo para postar'); return; }
+    setComposerError(null);
+    await create(content.trim(), token || undefined);
+    setContent('');
+    setComposerSuccess(true);
+    setTimeout(()=> setComposerSuccess(false), 1200);
+  };
 
   const share = async (p: Post) => {
     const text = `${p.content}\n\nCompartilhado via User Profile App`;
@@ -137,20 +156,33 @@ export default function Feed() {
     try { await navigator.clipboard.writeText(text); alert('Conteúdo copiado para a área de transferência'); } catch (e) { alert('Não foi possível compartilhar'); }
   };
 
-  const doLike = async (id: string) => { if (!token) { alert('Faça login'); return; } await like(id, token || undefined); };
+  const [editingPostId, setEditingPostId] = useState<string|null>(null);
+  const [editingText, setEditingText] = useState('');
+  const startEdit = (p:Post) => { setEditingPostId(p.id); setEditingText(p.content); };
+  const cancelEdit = () => { setEditingPostId(null); setEditingText(''); };
+  const saveEdit = async () => {
+    if (!editingPostId || !token) return;
+    const trimmed = editingText.trim();
+    if (!trimmed) {
+      await Swal.fire({ icon:'warning', title:'Conteúdo vazio', text:'Digite algo antes de salvar.' });
+      return;
+    }
+    await update(editingPostId, trimmed, token);
+    setEditingPostId(null); setEditingText('');
+  };
+  const doLike = async (id: string) => { if (!token) { await Swal.fire({icon:'info',title:'Login necessário'}); return; } await like(id, token || undefined); };
 
   const doDelete = async (postId: string) => {
-    if (!token) return alert('Faça login');
-    if (!confirm('Remover este post?')) return;
-  const API = getApi();
-    await fetch(`${API}/api/posts/${postId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-    // refresh
-    await load();
+    if (!token) { await Swal.fire({icon:'info',title:'Faça login'}); return; }
+    const res = await Swal.fire({icon:'question', title:'Remover post?', text:'Essa ação não pode ser desfeita.', showCancelButton:true, confirmButtonText:'Remover', cancelButtonText:'Cancelar', confirmButtonColor:'#ef4444'});
+    if (!res.isConfirmed) return;
+    await remove(postId, token || undefined);
   };
 
   const canComment = async (ownerId: string) => {
     if (!token) return false;
-  const API = getApi();
+    if (!ownerId || ownerId.trim() === '') return false; // Validação para ID vazio
+    const API = getApi();
     try {
       const res = await fetch(`${API}/api/profiles/${ownerId}/is-following`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return false;
@@ -158,50 +190,64 @@ export default function Feed() {
     } catch (e) { return false; }
   };
 
+  const [openComments, setOpenComments] = useState<Record<string, boolean>>({});
+  const [comments, setComments] = useState<Record<string, Comment[]>>({});
+  const [pendingComment, setPendingComment] = useState<Record<string,string>>({});
+  const toggleComments = async (postId:string) => {
+    setOpenComments(o=>({...o,[postId]:!o[postId]}));
+    if (!comments[postId]) {
+      try {
+        const API = getApi();
+        const res = await fetch(`${API}/api/posts/${postId}/comments`);
+        if (res.ok) { const data = await res.json(); setComments(c=>({...c,[postId]:data||[]})); }
+      } catch (e) {}
+    }
+  };
+  const [commentErrors, setCommentErrors] = useState<Record<string,string|undefined>>({});
+  const [commentSuccess, setCommentSuccess] = useState<Record<string,boolean>>({});
+  const sendComment = async (postId:string) => {
+    if (!token) return alert('Faça login');
+    const text = (pendingComment[postId]||'').trim();
+    if (!text) { setCommentErrors(e=>({...e,[postId]:'Comentário vazio'})); return; }
+    setCommentErrors(e=>({...e,[postId]:undefined}));
+    // optimistic local append
+  const tmp: Comment = { id:'tmp-'+Date.now(), postId, userId: me?.userId||'', content: text, createdAt: new Date().toISOString(), authorName: me?.displayName || me?.email || me?.userId };
+    setComments(c=>({ ...c, [postId]: [...(c[postId]||[]), tmp] }));
+    setPendingComment(p=>({...p,[postId]:''}));
+    try {
+      const API = getApi();
+      const res = await fetch(`${API}/api/posts/${postId}/comments`, { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`}, body: JSON.stringify({ content: text }) });
+      if (res.ok) {
+        const real = await res.json();
+        setComments(c=>({ ...c, [postId]: (c[postId]||[]).map(cm=> cm.id===tmp.id ? real : cm) }));
+        setCommentSuccess(s=>({...s,[postId]:true}));
+        setTimeout(()=> setCommentSuccess(s=>({...s,[postId]:false})), 1000);
+      }
+    } catch (e) {}
+  };
+
+  // notifications websocket moved to Layout
+
   return (
     <div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',position:'relative'}}>
         <h1>Feed</h1>
-        <div>
-          <button onClick={toggleNotifications} style={{position:'relative'}} aria-label="Notifications">🔔
-            {unreadCount > 0 && (
-              <span style={{position:'absolute', top:-6, right:-6, background:'#ff4d4d', color:'#fff', borderRadius:12, padding:'2px 6px', fontSize:12}} aria-hidden>{unreadCount}</span>
-            )}
-          </button>
-        </div>
       </div>
-      {showNotifications && (
-        <div style={{position:'absolute',right:20,top:60,background:'#222',padding:12,borderRadius:6,width:320}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <h4 style={{margin:0}}>Notificações</h4>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              {unreadCount > 0 && <div style={{fontSize:12,color:'#fff',opacity:.8}}>{unreadCount} não-lida(s)</div>}
-              <button onClick={markAllAsRead} className="primary" style={{fontSize:12,padding:'6px 8px'}}>Marcar tudo como lido</button>
-            </div>
-          </div>
-          <div style={{marginTop:8}}>
-            {notifications.length === 0 && <div className="muted">Sem notificações</div>}
-            {notifications.map(n => (
-              <div key={n.id} style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.03)', opacity: n.read ? .6 : 1}}>
-                <div style={{fontWeight:700}}>{String(n.type)}</div>
-                <div style={{fontSize:12}}>{formatNotification(n)}</div>
-                <div style={{marginTop:6,display:'flex',gap:8}}>
-                  {!n.read && <button style={{fontSize:12}} onClick={async () => { const API_LOCAL = getApi(); await fetch(`${API_LOCAL}/api/notifications/${n.id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }); setNotifications(notifications.map(x=> x.id===n.id ? { ...x, read: true } : x)); setUnreadCount(c => Math.max(0, c-1)); try { localStorage.setItem('notifications_unread', String(Math.max(0, (parseInt(localStorage.getItem('notifications_unread')||'0',10)||0)-1))); } catch(e){} }}>Marcar como lido</button>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
       <div style={{marginBottom: 16}}>
-        <textarea placeholder="No que você está pensando?" value={content} onChange={e=>setContent(e.target.value)} />
-  <div className="center" style={{marginTop:8}}><button className="primary" onClick={createPost} disabled={loading}>{loading ? 'Postando...' : 'Postar'}</button></div>
+        <div className="composer-wrapper">
+          <textarea className="composer-box" placeholder=" " value={content} onChange={e=>setContent(e.target.value)} />
+          <span className="composer-placeholder">No que você está pensando?</span>
+        </div>
+        <div className="composer-actions" style={{marginTop:8,flexDirection:'column'}}>
+          <button className="primary" onClick={createPost} disabled={loading || !token || !content.trim()} style={composerSuccess ? {background:'#16a34a'}:undefined}>{composerSuccess ? 'Postado!' : (loading ? 'Postando...' : 'Postar')}</button>
+          {composerError && <div className="field-error" style={{marginTop:6}}>{composerError}</div>}
+        </div>
       </div>
 
       <div style={{marginBottom: 16}} className="card">
         <h3>Buscar pessoas</h3>
         <form onSubmit={search} style={{display:'flex',gap:8}}>
-          <input placeholder="nome ou email (min 2 chars)" value={query} onChange={e=>setQuery(e.target.value)} />
+          <input placeholder="nome ou email (min 2 chars)" value={query} onChange={e=>{ const v=e.target.value; setQuery(v); if(!v.trim()) setResults([]); }} />
           <button type="submit" className="primary">Buscar</button>
         </form>
         {results.length > 0 && (
@@ -221,43 +267,89 @@ export default function Feed() {
         )}
       </div>
 
-  {(posts || []).map(p => (
+      <div className="posts-scroll">
+      {(posts || [])
+        .filter(p => p && p.id && p.userId)
+        .map(p => (
         <div key={p.id} className="card" style={{marginBottom:12}}>
-          <div style={{fontSize:12, opacity:.8}}>{new Date(p.createdAt).toLocaleString()}</div>
-          <div style={{marginTop:8}}>{p.content}</div>
-          <div style={{marginTop:10, display:'flex', gap:8}}>
-            <button onClick={() => doLike(p.id)} className="primary">Curtir ({p.likes})</button>
-            <button onClick={() => share(p)} className="primary" style={{background:'transparent',border:'1px solid rgba(255,255,255,0.06)'}}>Compartilhar</button>
-            {me && me.userId === p.userId && (
-              <button onClick={() => doDelete(p.id)} style={{background:'#ff6b6b'}}>Deletar</button>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div style={{fontWeight:600}}>{p.authorName || p.userId}</div>
+            <div style={{fontSize:12, opacity:.6}}>{new Date(p.createdAt).toLocaleString()}</div>
+          </div>
+          <div style={{marginTop:8}}>
+            {editingPostId === p.id ? (
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                <textarea value={editingText} onChange={e=>setEditingText(e.target.value)} style={{width:'100%',minHeight:90,borderRadius:12,padding:10,background:'rgba(255,255,255,0.05)',color:'inherit',border:'1px solid rgba(255,255,255,0.1)'}} />
+                <div style={{display:'flex',gap:8}}>
+                  <button className="primary" onClick={saveEdit}>Salvar</button>
+                  <button className="icon-btn" onClick={cancelEdit}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              p.content
             )}
           </div>
-          {/* comment box only if following */}
-          <div style={{marginTop:8}}>
-            <CommentBox ownerId={p.userId} postId={p.id} canCommentFn={canComment} token={token} onCommented={() => load()} />
+          <div style={{marginTop:10, display:'flex', gap:4, flexWrap:'wrap'}}>
+            <button onClick={() => doLike(p.id)} className="primary" style={{display:'flex',alignItems:'center',gap:4, background: p.liked ? '#4ade80' : undefined}}>
+              <span>{p.liked ? 'Descurtir' : 'Curtir'} ({p.likes})</span>
+            </button>
+            <button onClick={() => share(p)} className="icon-btn" aria-label="Compartilhar" title="Compartilhar">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98"/><path d="M15.41 6.51 8.59 10.49"/></svg>
+            </button>
+            <button onClick={() => toggleComments(p.id)} className="icon-btn" aria-label="Comentários" title="Comentários" style={{position:'relative'}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-4.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              {typeof (p as any).comments === 'number' && (
+                <span style={{position:'absolute',top:-6,right:-6,background:'#6366f1',color:'#fff',borderRadius:'12px',padding:'0 6px',fontSize:10,fontWeight:600}}>{(p as any).comments}</span>
+              )}
+            </button>
+            {me && me.userId === p.userId && (
+              <>
+                <button onClick={() => startEdit(p)} className="icon-btn" aria-label="Editar" title="Editar">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4h9"/><path d="M4 20h9"/><path d="M12 20l8-8-8-8-8 8 8 8Z" transform="translate(-4 -4)"/></svg>
+                </button>
+                <button onClick={() => doDelete(p.id)} className="icon-btn danger" aria-label="Excluir" title="Excluir">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"/></svg>
+                </button>
+              </>
+            )}
           </div>
+          {openComments[p.id] && (
+            <div style={{marginTop:12}}>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {(comments[p.id]||[]).map(c => (
+                  <div key={c.id} style={{padding:'6px 10px',background:'rgba(255,255,255,0.04)',borderRadius:8,fontSize:13}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontWeight:500}}>{c.authorName || c.userId}</span>
+                      <span style={{opacity:.6,fontSize:11}}>{new Date(c.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div style={{marginTop:4}}>{c.content}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="comment-input-row" style={{flexDirection:'column',alignItems:'stretch'}}>
+                <div style={{display:'flex',gap:10}}>
+                  <input
+                    className="comment-input"
+                    value={pendingComment[p.id]||''}
+                    onChange={e=> { setPendingComment(pc=>({...pc,[p.id]:e.target.value})); if(commentErrors[p.id]) setCommentErrors(er=>({...er,[p.id]:undefined})); }}
+                    placeholder="Escreva um comentário..."
+                  />
+                  <button
+                    className="primary comment-send-btn"
+                    disabled={!pendingComment[p.id]?.trim()}
+                    style={commentSuccess[p.id]?{background:'#16a34a'}:undefined}
+                    onClick={()=>sendComment(p.id)}
+                  >{commentSuccess[p.id] ? 'Enviado!' : 'Enviar'}</button>
+                </div>
+                {commentErrors[p.id] && <div className="field-error" style={{marginTop:4}}>{commentErrors[p.id]}</div>}
+              </div>
+            </div>
+          )}
         </div>
       ))}
+      </div>
     </div>
   );
 }
 
-function CommentBox({ ownerId, postId, canCommentFn, token, onCommented }: any) {
-  const [text, setText] = useState('');
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  useEffect(() => { (async () => setAllowed(await canCommentFn(ownerId)))(); }, [ownerId]);
-  const submit = async () => {
-    if (!token) return alert('Login necessário');
-    if (!allowed) return alert('Somente amigos podem comentar');
-  await fetch(`${getApi()}/api/posts/${postId}/comments`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ content: text }) });
-    setText(''); onCommented?.();
-  };
-  if (allowed === null) return null;
-  if (!allowed) return <div className="muted">Só amigos podem comentar</div>;
-  return (
-    <div style={{display:'flex',gap:8}}>
-      <input value={text} onChange={e=>setText(e.target.value)} placeholder="Comentar..." />
-      <button onClick={submit} className="primary">Comentar</button>
-    </div>
-  );
-}
+// (CommentBox removido; lógica incorporada inline com toggle e listagem.)

@@ -14,6 +14,7 @@ paths:
   /api/auth/register:
     post:
       summary: Register
+      tags: [Auth]
       requestBody:
         required: true
         content:
@@ -30,6 +31,7 @@ paths:
   /api/auth/login:
     post:
       summary: Login
+      tags: [Auth]
       requestBody:
         required: true
         content:
@@ -45,17 +47,106 @@ paths:
   /api/profiles/me:
     get:
       summary: Get current profile
+      tags: [Profiles]
       security:
         - bearerAuth: []
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+    put:
+      summary: Update current profile
+      tags: [Profiles]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bio: { type: string }
+                avatarUrl: { type: string, format: uri }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Profile' } } } }
+  /api/profiles/{id}/follow:
+    post:
+      summary: Follow a user
+      tags: [Profiles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Followed }
+  /api/profiles/{id}/unfollow:
+    post:
+      summary: Unfollow a user
+      tags: [Profiles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Unfollowed }
+  /api/profiles/{id}/following:
+    get:
+      summary: List following of a profile
+      tags: [Profiles]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
         '200': { description: OK }
+  /api/profiles/{id}/followers:
+    get:
+      summary: List followers of a profile
+      tags: [Profiles]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+  /api/profiles/{id}/is-following:
+    get:
+      summary: Check if current user is following a profile
+      tags: [Profiles]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { isFollowing: { type: boolean } } } } } }
   /api/posts:
     get:
       summary: List posts
+      tags: [Posts]
+      parameters:
+        - in: query
+          name: feedFor
+          schema: { type: string }
       responses:
         '200': { description: OK }
     post:
       summary: Create post
+      tags: [Posts]
       security:
         - bearerAuth: []
       requestBody:
@@ -69,9 +160,44 @@ paths:
                 content: { type: string }
       responses:
         '201': { description: Created }
+  /api/posts/{id}:
+    put:
+      summary: Update post
+      tags: [Posts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete (soft) a post
+      tags: [Posts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted }
   /api/posts/{id}/like:
     post:
       summary: Like/Unlike post (toggle)
+      tags: [Posts]
       security:
         - bearerAuth: []
       parameters:
@@ -81,9 +207,134 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: OK }
+  /api/posts/{id}/comments:
+    post:
+      summary: Comment on a post
+      tags: [Posts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        '201': { description: Created }
+    get:
+      summary: List comments of a post
+      tags: [Posts]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+  /api/users:
+    get:
+      summary: Search users
+      tags: [Users]
+      parameters:
+        - in: query
+          name: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+  /api/notifications/{id}:
+    get:
+      summary: List notifications of a user
+      tags: [Notifications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+    /api/notifications/{userId}/read-all:
+      post:
+        summary: Mark all notifications as read for the user
+        tags: [Notifications]
+        security:
+          - bearerAuth: []
+        parameters:
+          - in: path
+            name: userId
+            required: true
+            schema:
+              type: string
+        responses:
+          '200':
+            description: All notifications marked as read
+    /api/notifications/{userId}/clear:
+      post:
+        summary: Delete (clear) all notifications for the user
+        tags: [Notifications]
+        security:
+          - bearerAuth: []
+        parameters:
+          - in: path
+            name: userId
+            required: true
+            schema:
+              type: string
+        responses:
+          '200':
+            description: Notifications cleared
+  /api/notifications/{id}/read:
+    post:
+      summary: Mark notification as read
+      tags: [Notifications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Marked as read }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  schemas:
+    Profile:
+      type: object
+      properties:
+        userId: { type: string }
+        bio: { type: string }
+        avatarUrl: { type: string, nullable: true }
+        followersCount: { type: integer, example: 5 }
+        followingCount: { type: integer, example: 12 }
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
+        likes: { type: integer }
+        comments: { type: integer, nullable: true }
+    Comment:
+      type: object
+      properties:
+        id: { type: string }
+        postId: { type: string }
+        userId: { type: string }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }

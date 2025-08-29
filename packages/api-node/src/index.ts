@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import helmet from 'helmet';
@@ -9,14 +9,20 @@ import path from 'path';
 import YAML from 'yamljs';
 import swaggerUi from 'swagger-ui-express';
 import axios from 'axios';
+import http from 'http';
+import httpProxy from 'http-proxy';
 
 dotenv.config();
 
 const app = express();
-app.use(express.json());
+// CORS FIRST so even body parser errors return headers
+app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*', credentials: true }));
+// Increase payload limit for avatar base64 (default ~100kb would 413)
+const BODY_LIMIT = process.env.BODY_LIMIT || '10mb';
+app.use(express.json({ limit: BODY_LIMIT }));
+app.use(express.urlencoded({ limit: BODY_LIMIT, extended: true }));
 app.use(helmet());
 app.use(morgan('dev'));
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || '*', credentials: true }));
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://auth-service:8081';
@@ -67,11 +73,23 @@ function authMiddleware(req: any, _res: any, next: any) {
 }
 
 // Profiles
-app.get('/api/profiles/me', authMiddleware, async (req: any, res, next) => {
+app.get('/api/profiles/me', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
   try {
     const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.user.id}`);
-    res.json(data);
-  } catch (err) { next(err); }
+    return res.json(data);
+  } catch (err: any) {
+    const status = err.response?.status;
+    if (status === 404) {
+      // auto-provision empty profile then return it
+      try {
+        const put = await axios.put(`${PROFILE_SERVICE_URL}/profiles/${req.user.id}`, { bio: '', avatarUrl: '' });
+        return res.json(put.data);
+      } catch (e) {
+        return next(e);
+      }
+    }
+    return next(err);
+  }
 });
 
 app.put('/api/profiles/me', authMiddleware, async (req: any, res, next) => {
@@ -97,12 +115,26 @@ app.post('/api/posts', authMiddleware, async (req: any, res, next) => {
     res.status(201).json(data);
   } catch (err) { next(err); }
 });
+app.put('/api/posts/:id', authMiddleware, async (req: any, res, next) => {
+  try {
+    const { id } = req.params;
+    const { data } = await axios.put(`${POST_SERVICE_URL}/posts/${id}`, { userId: req.user.id, content: req.body.content });
+    res.json(data);
+  } catch (err) { next(err); }
+});
 
 app.post('/api/posts/:id/comments', authMiddleware, async (req: any, res, next) => {
   try {
     const { id } = req.params;
     const { data } = await axios.post(`${POST_SERVICE_URL}/posts/${id}/comments`, { userId: req.user.id, content: req.body.content });
     res.status(201).json(data);
+  } catch (err) { next(err); }
+});
+app.get('/api/posts/:id/comments', async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { data } = await axios.get(`${POST_SERVICE_URL}/posts/${id}/comments`);
+    res.json(data);
   } catch (err) { next(err); }
 });
 
@@ -117,10 +149,14 @@ app.delete('/api/posts/:id', authMiddleware, async (req: any, res, next) => {
 // Check if current user follows another user
 app.get('/api/profiles/:id/is-following', authMiddleware, async (req: any, res, next) => {
   try {
-  const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
-  // profile-service returns an array of user objects { id, email, displayName }
-  const isFollowing = Array.isArray(data) ? data.some((u: any) => u.id === req.user.id) : false;
-  res.json({ isFollowing });
+    const { id } = req.params;
+    if (!id || id.trim() === '') {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+    const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${id}/following`);
+    // profile-service returns an array of user objects { id, email, displayName }
+    const isFollowing = Array.isArray(data) ? data.some((u: any) => u.id === req.user.id) : false;
+    res.json({ isFollowing });
   } catch (err) { next(err); }
 });
 
@@ -137,31 +173,49 @@ app.post('/api/notifications/:id/read', authMiddleware, async (req: any, res, ne
     res.status(204).end();
   } catch (err) { next(err); }
 });
+app.post('/api/notifications/:id/read-all', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
+  try {
+    await axios.post(`${POST_SERVICE_URL}/notifications/${req.params.id}/read-all`);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+app.post('/api/notifications/:id/clear', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
+  try {
+    await axios.post(`${POST_SERVICE_URL}/notifications/${req.params.id}/clear`);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
 
 // follow/unfollow
 // Require auth for follow/unfollow and use requester's user id when possible
-app.post('/api/profiles/:id/follow', authMiddleware, async (req: any, res, next) => {
+app.post('/api/profiles/:id/follow', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
   try {
     const follower = req.user.id || req.body.followerId;
     await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/follow`, { followerId: follower });
     res.status(204).end();
   } catch (err) { next(err); }
 });
-app.post('/api/profiles/:id/unfollow', authMiddleware, async (req: any, res, next) => {
+app.post('/api/profiles/:id/unfollow', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
   try {
     const follower = req.user.id || req.body.followerId;
     await axios.post(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/unfollow`, { followerId: follower });
     res.status(204).end();
   } catch (err) { next(err); }
 });
-app.get('/api/profiles/:id/following', async (req, res, next) => {
+app.get('/api/profiles/:id/following', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/following`);
     res.json(data);
   } catch (err) { next(err); }
 });
+app.get('/api/profiles/:id/followers', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { data } = await axios.get(`${PROFILE_SERVICE_URL}/profiles/${req.params.id}/followers`);
+    res.json(data);
+  } catch (err) { next(err); }
+});
 
-app.post('/api/posts/:id/like', authMiddleware, async (req: any, res, next) => {
+app.post('/api/posts/:id/like', authMiddleware, async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const { data } = await axios.post(`${POST_SERVICE_URL}/posts/${id}/like`, { userId: req.user.id });
@@ -170,7 +224,7 @@ app.post('/api/posts/:id/like', authMiddleware, async (req: any, res, next) => {
 });
 
 // Users search
-app.get('/api/users', async (req, res, next) => {
+app.get('/api/users', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const q = req.query.query || '';
     const { data } = await axios.get(`${AUTH_SERVICE_URL}/users?query=${encodeURIComponent(String(q))}`);
@@ -178,14 +232,46 @@ app.get('/api/users', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Criar proxy para WebSocket
+const proxy = httpProxy.createProxyServer({ ws: true });
+
 // Error handler
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: any, _req: any, res: any, _next: any) => {
   const status = err.response?.status || err.status || 500;
-  const message = err.response?.data || err.message || 'Internal error';
-  res.status(status).json({ error: message });
+  let payload = err.response?.data || err.message || 'Internal error';
+  // Se o serviço interno devolveu {error:"..."}, evitar aninhar {error:{error:"..."}}
+  if (payload && typeof payload === 'object' && 'error' in payload && typeof (payload as any).error === 'string') {
+    payload = (payload as any).error;
+  }
+  if (typeof payload !== 'string') {
+    try { payload = JSON.stringify(payload); } catch { payload = 'Erro'; }
+  }
+  res.status(status).json({ error: payload });
 });
 
-app.listen(PORT, () => {
+// Criar servidor HTTP para suportar WebSocket upgrade
+const server = http.createServer(app);
+
+// Configurar proxy de WebSocket
+server.on('upgrade', (req, socket, head) => {
+  if (req.url?.startsWith('/ws')) {
+    console.log(`WebSocket proxy request: ${req.url} -> ${POST_SERVICE_URL}`);
+    proxy.ws(req, socket, head, {
+      target: POST_SERVICE_URL.replace('http:', 'ws:'),
+      changeOrigin: true
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+// Tratamento de erros do proxy
+proxy.on('error', (err: any, req: any, res: any) => {
+  console.error('Proxy error:', err);
+});
+
+server.listen(PORT, () => {
   console.log(`API Gateway listening on :${PORT}`);
+  console.log(`WebSocket proxy configured for ${POST_SERVICE_URL}/ws`);
 });

@@ -1,23 +1,54 @@
 import Link from 'next/link';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Head from 'next/head';
 import { getApi, getWsUrl } from '../utils/api';
 import { useRouter } from 'next/router';
 
 export default function Layout({ children, title = 'User Profile App' }: any) {
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [badgeCount, setBadgeCount] = useState(0);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [loadingNotifs, setLoadingNotifs] = useState(false);
   const router = useRouter();
+  const initials = useMemo(() => {
+    const src = (displayName || '').trim();
+    if (!src) return '';
+    const parts = src.split(/\s+/).slice(0,2);
+    const letters = parts.map(p=>p[0]).join('').toUpperCase();
+    return letters || src.slice(0,2).toUpperCase();
+  }, [displayName]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setToken(localStorage.getItem('token'));
-  try { const p = JSON.parse(localStorage.getItem('profile') || 'null'); setDisplayName(p?.displayName || null); } catch(e) {}
-      const c = parseInt(localStorage.getItem('notifications_unread') || '0', 10) || 0;
-      setBadgeCount(c);
+      try {
+        const p = JSON.parse(localStorage.getItem('profile') || 'null');
+        const token = localStorage.getItem('token');
+        // se profile não pertence ao token atual, não usar avatar para evitar mostrar de outro usuário
+        let tokenUser: string | null = null;
+        if (token) {
+          try { const payload = JSON.parse(atob(token.split('.')[1]||'')); tokenUser = payload.sub || payload.userId || payload.id || null; } catch(_){}
+        }
+        if (tokenUser && p?.userId && p.userId !== tokenUser) {
+          // perfil desatualizado / outro usuário: limpar
+          setDisplayName(null);
+          setAvatarUrl(null);
+        } else {
+          const dn = p?.displayName || localStorage.getItem('displayName');
+          setDisplayName(dn || null);
+          const av = p?.avatarUrl || '';
+          setAvatarUrl(av || null);
+          if (av) { try { localStorage.setItem('avatarUrl', av); } catch(_){} } else { try { localStorage.removeItem('avatarUrl'); } catch(_){} }
+        }
+  // (persistência do avatar já tratada acima na lógica nova; removido bloco antigo)
+      } catch(e) {}
+  const c = parseInt(localStorage.getItem('notifications_unread') || '0', 10) || 0;
+  setBadgeCount(c);
+  // fetch initial notifications to sync (optional, quietly)
+  fetchNotifications().catch(()=>{});
       // open websocket to update badge in realtime (if backend ws provided)
       try {
   const wsBase = getWsUrl();
@@ -26,25 +57,48 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
           let reconnectTimeout = 1000;
           const connect = () => {
             try {
-              const tokenParam = localStorage.getItem('token') ? `?token=${encodeURIComponent(localStorage.getItem('token') || '')}` : '';
+              const token = localStorage.getItem('token');
+              if (!token) {
+                console.log('No token available for WebSocket connection');
+                return; // Não tentar conectar sem token
+              }
+              const tokenParam = `?token=${encodeURIComponent(token)}`;
               ws = new WebSocket(wsBase + tokenParam);
-              ws.onopen = () => { reconnectTimeout = 1000; };
+              ws.onopen = () => { 
+                reconnectTimeout = 1000; 
+                console.log('WebSocket connected successfully');
+              };
               ws.onmessage = (ev) => {
                 try {
                   const msg = JSON.parse(ev.data);
                   if (msg.type === 'notification_created') {
-                    // only increment if the notification is for the current user
+                    const n = msg.notification || { id: msg.notificationId, userId: msg.userId, type: msg.payload?.type || msg.typeDetail || 'generic', payload: msg.payload, read: false, createdAt: new Date().toISOString() };
                     const curUserId = (() => { try { const p = JSON.parse(localStorage.getItem('profile')||'null'); return p?.userId; } catch(e){return null;} })();
-                    if (!msg.userId || (curUserId && msg.userId !== curUserId)) return;
+                    if (n.userId && curUserId && n.userId !== curUserId) return;
+                    setNotifications(prev => prev.some(x=>x.id===n.id)? prev : [n, ...prev]);
                     const next = (parseInt(localStorage.getItem('notifications_unread') || '0', 10) || 0) + 1;
                     localStorage.setItem('notifications_unread', String(next));
                     setBadgeCount(next);
                   }
                 } catch (e) {}
               };
-              ws.onclose = () => { setTimeout(connect, reconnectTimeout); reconnectTimeout = Math.min(30000, reconnectTimeout * 1.5); };
-              ws.onerror = () => { try { ws?.close(); } catch (e) {} };
-            } catch (e) { setTimeout(connect, reconnectTimeout); }
+              ws.onclose = (event) => { 
+                console.log('WebSocket closed:', event.code, event.reason);
+                if (localStorage.getItem('token')) { // Só reconectar se ainda houver token
+                  setTimeout(connect, reconnectTimeout); 
+                  reconnectTimeout = Math.min(30000, reconnectTimeout * 1.5); 
+                }
+              };
+              ws.onerror = (error) => { 
+                console.error('WebSocket error:', error);
+                try { ws?.close(); } catch (e) {} 
+              };
+            } catch (e) { 
+              console.error('WebSocket connection error:', e);
+              if (localStorage.getItem('token')) {
+                setTimeout(connect, reconnectTimeout); 
+              }
+            }
           };
           connect();
         }
@@ -52,11 +106,49 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
     }
   }, []);
 
+  // Escutar mudanças de autenticação (login/logout) sem precisar de refresh
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleAuthChange = () => {
+      const tok = localStorage.getItem('token');
+      setToken(tok);
+      try {
+        const p = JSON.parse(localStorage.getItem('profile') || 'null');
+        const token = localStorage.getItem('token');
+        let tokenUser: string | null = null;
+        if (token) {
+          try { const payload = JSON.parse(atob(token.split('.')[1]||'')); tokenUser = payload.sub || payload.userId || payload.id || null; } catch(_){}
+        }
+        if (tokenUser && p?.userId && p.userId !== tokenUser) {
+          setDisplayName(null);
+          setAvatarUrl(null);
+        } else {
+          const dn = p?.displayName || localStorage.getItem('displayName');
+          setDisplayName(dn || null);
+          const av = p?.avatarUrl || '';
+          setAvatarUrl(av || null);
+          if (av) { try { localStorage.setItem('avatarUrl', av); } catch(_){} } else { try { localStorage.removeItem('avatarUrl'); } catch(_){} }
+        }
+      } catch (e) {}
+    };
+    window.addEventListener('auth-changed', handleAuthChange as any);
+    window.addEventListener('profile-updated', handleAuthChange as any);
+    window.addEventListener('storage', handleAuthChange); // multi-abas
+    return () => {
+      window.removeEventListener('auth-changed', handleAuthChange as any);
+      window.removeEventListener('profile-updated', handleAuthChange as any);
+      window.removeEventListener('storage', handleAuthChange);
+    };
+  }, []);
+
   const logout = () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('token');
   try { localStorage.removeItem('profile'); } catch(e) {}
+  try { localStorage.removeItem('avatarUrl'); } catch(e) {}
+  setAvatarUrl(null);
       setToken(null);
+  try { window.dispatchEvent(new Event('auth-changed')); } catch(e) {}
       router.push('/login');
     }
   };
@@ -99,13 +191,34 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
   const formatNotification = (n: any) => {
     try {
       const p = n.payload || {};
-      const from = p.from || p.displayName || 'Alguém';
+      const from = p.fromName || p.displayName || p.from || 'Alguém';
       if (n.type === 'like') return `${from} curtiu seu post`;
       if (n.type === 'comment') return `${from} comentou: "${String(p.comment || '').slice(0,80)}"`;
       if (n.type === 'follow') return `${from} começou a seguir você`;
       return typeof p === 'object' ? JSON.stringify(p) : String(p);
     } catch (e) { return '' }
   };
+
+  const toggleNotifs = async () => {
+    setShowNotifs(s => !s);
+    if (!showNotifs) {
+      setLoadingNotifs(true);
+      await fetchNotifications().catch(()=>{});
+      setLoadingNotifs(false);
+      // marcar como lidas localmente (simples)
+      try {
+        // persistir no backend (marcar todas como lidas) para não voltar após refresh
+        const uid = (() => { try { const p = JSON.parse(localStorage.getItem('profile')||'null'); return p?.userId; } catch(e){return null;} })();
+        const token = localStorage.getItem('token');
+        if (uid && token) {
+          const API = getApi();
+          await fetch(`${API}/api/notifications/${uid}/read-all`, { method:'POST', headers: { Authorization: `Bearer ${token}` } });
+        }
+      } catch(e) {}
+      try { localStorage.setItem('notifications_unread', '0'); } catch(e) {}
+      setBadgeCount(0);
+    }
+  }
 
   // close dropdown when clicking outside
   useEffect(() => {
@@ -122,6 +235,7 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
     return () => document.removeEventListener('click', onDoc);
   }, []);
 
+  const isAuthed = !!token;
   return (
     <div className="container">
       <Head>
@@ -136,63 +250,80 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
             <div className="muted" style={{fontSize:12}}>simple social profiles</div>
           </div>
         </div>
-        <nav className="nav">
-          <Link href="/">Home</Link>
-        {token ? (
-            <>
-              <Link href="/feed">Feed</Link>
-              <Link href="/profile">Perfil</Link>
-        <div style={{position:'relative', display:'inline-block'}}>
-          <button onClick={(e) => { e.stopPropagation(); const p = (() => { try { return JSON.parse(localStorage.getItem('profile')||'null'); } catch(e){return null;} })(); if (!p) { router.push('/login'); return; } setShowNotifs(s => { const next = !s; if (next) fetchNotifications(p.userId); return next; }); }} className="notif-btn" aria-label="Notificações" title="Notificações">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-              <path d="M15 17H9a2 2 0 0 1-2-2V11a5 5 0 1 1 10 0v4a2 2 0 0 1-2 2z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {badgeCount > 0 && <span className="notif-badge" aria-hidden>{badgeCount}</span>}
-          </button>
+      
+          {/* User chip + single notifications bell */}
+          <nav style={{display:'flex',alignItems:'center',gap:16,marginLeft:24}}>
+            {isAuthed ? (
+              <>
+                <Link href="/feed" aria-label="Feed" className="icon-btn" style={router.pathname.startsWith('/feed') ? {background:'rgba(255,255,255,0.08)'} : {}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg>
+                </Link>
+                <Link href="/profile" aria-label="Perfil" className="icon-btn" style={router.pathname.startsWith('/profile') ? {background:'rgba(255,255,255,0.08)'} : {}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.8-3.5 5-5.5 7.5-5.5s5.7 2 7.5 5.5"/></svg>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/login" aria-label="Login" className="icon-btn" style={router.pathname.startsWith('/login') ? {background:'rgba(255,255,255,0.08)'} : {}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h3a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-3"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+                </Link>
+                <Link href="/register" aria-label="Registrar" className="icon-btn" style={router.pathname.startsWith('/register') ? {background:'rgba(255,255,255,0.08)'} : {}}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Z"/><path d="M2 21a9.94 9.94 0 0 1 10-7 9.94 9.94 0 0 1 10 7"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+                </Link>
+              </>
+            )}
+          </nav>
+          {isAuthed && <div style={{display:'flex',alignItems:'center',gap:12,marginLeft:12}}>
+            <Link href="/profile" className="user-chip" style={{display:'flex',alignItems:'center',gap:8,textDecoration:'none',cursor:'pointer'}}>
+              {avatarUrl ? (
+                <img className="chip-avatar" src={avatarUrl} alt="avatar" />
+              ) : (
+                <div style={{width:28,height:28,borderRadius:'50%',background:'rgba(255,255,255,0.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:600,letterSpacing:.5,color:'#fff'}}>{initials || '?'}</div>
+              )}
+              <span className="chip-name">{displayName || 'Perfil'}</span>
+            </Link>
+            <button className="icon-btn notif-btn" onClick={toggleNotifs} aria-label="Notificações">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6v-5a7 7 0 1 0-14 0v5l-2 2v1h18v-1l-2-2Z" stroke="currentColor" strokeWidth="1.5"/>
+              </svg>
+              {badgeCount>0 && <span className="notif-badge">{badgeCount}</span>}
+            </button>
+            <button onClick={logout} className="primary">Sair</button>
+          </div>}
+
           {showNotifs && (
-            <div className="notif-dropdown" role="dialog" aria-label="Notificações">
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div className="notif-dropdown">
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                 <strong>Notificações</strong>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  {badgeCount > 0 && <div style={{fontSize:12,color:'#fff',opacity:.8}}>{badgeCount} não-lida(s)</div>}
-                  <button className="primary" style={{fontSize:12,padding:'6px 8px'}} onClick={async () => {
-                    // mark all as read
-                    const p = (() => { try { return JSON.parse(localStorage.getItem('profile')||'null'); } catch(e){return null;} })();
-                    if (!p) return;
+                <div style={{display:'flex',gap:8}}>
+                  <button className="link" onClick={async ()=>{
+                    // limpar servidor
                     try {
-                      const API_READ = getApi();
-                      await Promise.all((notifications||[]).filter(n=>!n.read).map((n:any) => fetch(`${API_READ}/api/notifications/${n.id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })));
-                      const updated = notifications.map(n => ({ ...n, read: true })); setNotifications(updated); setBadgeCount(0); try{ localStorage.setItem('notifications_unread','0'); }catch(e){}
-                    } catch(e){}
-                  }}>Marcar tudo como lido</button>
+                      const uid = (() => { try { const p = JSON.parse(localStorage.getItem('profile')||'null'); return p?.userId; } catch(e){return null;} })();
+                      const token = localStorage.getItem('token');
+                      if (uid && token) {
+                        const API = getApi();
+                        await fetch(`${API}/api/notifications/${uid}/clear`, { method:'POST', headers:{ Authorization:`Bearer ${token}` }});
+                      }
+                    } catch(e) {}
+                    setNotifications([]); setBadgeCount(0);
+                  }}>Limpar</button>
+                  <button className="link" onClick={()=>{setNotifications([]);setBadgeCount(0);setShowNotifs(false);}}>Fechar</button>
                 </div>
               </div>
-              <div style={{marginTop:8}}>
-                {(!notifications || notifications.length === 0) && <div className="muted">Sem notificações</div>}
-                {notifications.map(n => (
-                  <div key={n.id} className={`notif-item ${!n.read ? 'unread' : ''}`}>
-                    <div style={{fontWeight:700}}>{String(n.type)}</div>
-                    <div className="meta">{typeof n.payload === 'object' ? JSON.stringify(n.payload) : String(n.payload)}</div>
-                    <div style={{marginTop:6,display:'flex',gap:8}}>
-                      {!n.read && <button style={{fontSize:12}} onClick={async () => { try { const API_ONE = getApi(); await fetch(`${API_ONE}/api/notifications/${n.id}/read`, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }); setNotifications(notifications.map(x=> x.id===n.id ? { ...x, read: true } : x)); setBadgeCount(c => Math.max(0, c-1)); try { localStorage.setItem('notifications_unread', String(Math.max(0, (parseInt(localStorage.getItem('notifications_unread')||'0',10)||0)-1))); } catch(e){} } catch(e){} }}>Marcar como lido</button>}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {loadingNotifs && <div className="muted" style={{fontSize:12}}>Carregando...</div>}
+              {!loadingNotifs && notifications.length === 0 && (
+                <div className="muted" style={{fontSize:12}}>Sem notificações</div>
+              )}
+              {!loadingNotifs && notifications.map(n => (
+                <div key={n.id || n.createdAt} className={"notif-item " + (n.read ? "" : "unread")}> 
+                  <div>{formatNotification(n)}</div>
+                  <div className="meta">{new Date(n.createdAt || n.created_at || Date.now()).toLocaleString()}</div>
+                </div>
+              ))}
             </div>
           )}
-        </div>
-        <span style={{marginLeft:12}}>{displayName || 'Você'}</span>
-        <a onClick={logout} style={{cursor:'pointer', marginLeft:12}}>Logout</a>
-            </>
-          ) : (
-            <>
-              <Link href="/login">Login</Link>
-              <Link href="/register">Criar conta</Link>
-            </>
-          )}
-        </nav>
+    
       </header>
 
       <main className="card">{children}</main>

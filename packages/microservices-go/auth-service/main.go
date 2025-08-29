@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,9 +12,10 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 	"github.com/julienschmidt/httprouter"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type App struct {
@@ -48,7 +50,17 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ httproute
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), a.BcryptCost)
 	ctx := context.Background()
 	_, err := a.DB.Exec(ctx, `INSERT INTO users (id, email, password_hash, display_name) VALUES ($1,$2,$3,$4)`, id, req.Email, string(hash), req.DisplayName)
-	if err != nil { http.Error(w, err.Error(), 409); return }
+	if err != nil {
+		// Sanitize duplicate email (unique violation) error
+		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{"error": "email already registered"})
+			return
+		}
+		http.Error(w, "could not create user", 500)
+		return
+	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "email": req.Email, "displayName": req.DisplayName})
 }
@@ -103,16 +115,42 @@ func main() {
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" { log.Fatal("JWT_SECRET required") }
 	cost := 12
-	if os.Getenv("BCRYPT_COST") != "" { fmt := os.Getenv("BCRYPT_COST"); 
-		// naive parse
-		if fmt == "10" { cost = 10 } else if fmt == "12" { cost = 12 } else { cost = 12 }
-	}
-	dsn := "postgres://"+os.Getenv("DB_USER")+":"+os.Getenv("DB_PASSWORD")+"@"+os.Getenv("DB_HOST")+":"+os.Getenv("DB_PORT")+"/"+os.Getenv("DB_NAME")
+	if os.Getenv("BCRYPT_COST") != "" { v := os.Getenv("BCRYPT_COST"); if v == "10" { cost = 10 } else if v == "12" { cost = 12 } }
+	user := os.Getenv("DB_USER")
+	pass := os.Getenv("DB_PASSWORD")
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	name := os.Getenv("DB_NAME")
+	if user == "" { user = "app" }
+	if host == "" { host = "db" }
+	if port == "" { port = "5432" }
+	if name == "" { name = "appdb" }
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, pass, host, port, name)
 	ctx := context.Background()
 	db, err := pgxpool.New(ctx, dsn)
-	if err != nil { log.Fatal(err) }
+	if err != nil { log.Fatalf("db connect error: %v", err) }
 	defer db.Close()
 	app := &App{DB: db, JWTSecret: []byte(jwtSecret), BcryptCost: cost}
+
+	// Auto seed: if no users, create a demo user + profile + sample posts
+	go func() {
+		ctx := context.Background()
+		var count int
+		if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err == nil && count == 0 {
+			uid := "11111111-1111-1111-1111-111111111111"
+			pass := "demo123"
+			hash, _ := bcrypt.GenerateFromPassword([]byte(pass), cost)
+			if _, err := db.Exec(ctx, `INSERT INTO users (id,email,password_hash,display_name) VALUES ($1,$2,$3,$4)`, uid, "demo@example.com", string(hash), "Demo"); err == nil {
+				// profile
+				_, _ = db.Exec(ctx, `INSERT INTO profiles (id, user_id, bio, avatar_url) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, uuid.NewString(), uid, "Perfil demo inicial. Edite sua bio.", "")
+				// posts de exemplo
+				p1 := uuid.NewString(); p2 := uuid.NewString()
+				_, _ = db.Exec(ctx, `INSERT INTO posts (id, user_id, content) VALUES ($1,$2,$3)`, p1, uid, "Bem-vindo! Este é um post de exemplo.")
+				_, _ = db.Exec(ctx, `INSERT INTO posts (id, user_id, content) VALUES ($1,$2,$3)`, p2, uid, "Segundo post de exemplo. Crie sua própria conta para testar.")
+				log.Println("seed: demo user created (demo@example.com / demo123)")
+			}
+		}
+	}()
 	router := httprouter.New()
 	router.POST("/register", app.handleRegister)
 	router.POST("/login", app.handleLogin)

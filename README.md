@@ -163,3 +163,24 @@ O Postgres é inicializado com `ops/db/init.sql`, criando:
 - Observabilidade → Prometheus/Grafana ou Loki para logs  
 - Autenticação centralizada via introspection no `auth-service`  
 - CI/CD com testes automáticos antes do deploy  
+
+---
+
+## 🌱 Variáveis de Ambiente Essenciais
+
+Crie um `.env` com algo como:
+
+```
+POSTGRES_USER=app
+POSTGRES_PASSWORD=app
+POSTGRES_DB=appdb
+JWT_SECRET=devsecret
+BCRYPT_COST=12
+AUTH_SERVICE_URL=http://auth-service:8081
+PROFILE_SERVICE_URL=http://profile-service:8082
+POST_SERVICE_URL=http://post-service:8083
+NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_WS_URL=ws://localhost:8083/ws
+```
+
+Os serviços Go agora usam `?sslmode=disable` no DSN para evitar erro TLS local: *server refused TLS connection*.
