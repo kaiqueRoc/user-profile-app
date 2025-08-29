@@ -15,7 +15,8 @@ export default function Profile() {
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<{ bio?: string; avatarUrl?: string; general?: string; success?: string }>({});
   const [userId, setUserId] = useState<string | null>(null);
-  const { posts, load } = usePosts('');
+  // Usa feed segmentado pelo usuário (self ou outro) para garantir refresh correto ao entrar na página/permutar usuário
+  const { posts, load } = usePosts(viewingUserId || userId || '');
   const [myPostsOverride, setMyPostsOverride] = useState<any[]>([]);
   const [commentsMap, setCommentsMap] = useState<Record<string, any[]>>({});
   const [loadingComments, setLoadingComments] = useState<Record<string, boolean>>({});
@@ -65,6 +66,23 @@ export default function Profile() {
   }, [router.isReady, router.query.u]);
   // garantir que posts são carregados sempre ao abrir perfil (independente do cache)
   useEffect(() => { load(); }, []);
+
+  // Força reload quando usuário visualizado muda (ex: navegar entre perfis)
+  useEffect(() => { if (viewingUserId || userId) load(); }, [viewingUserId, userId]);
+
+  // Recarrega posts quando novo post é criado pelo usuário logado (sincroniza após migrar feedFor)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (e: any) => {
+      const detail = e?.detail || {};
+      const uid = viewingUserId || userId;
+      if (uid && detail?.userId === uid) {
+        load();
+      }
+    };
+    window.addEventListener('post-created', handler as any);
+    return () => window.removeEventListener('post-created', handler as any);
+  }, [viewingUserId, userId]);
 
   // Carrega posts do usuário diretamente para evitar falha de filtro quando cache global está vazio/inválido
   useEffect(() => {

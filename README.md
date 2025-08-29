@@ -154,6 +154,9 @@ O Postgres é inicializado com `ops/db/init.sql`, criando:
 - **Cache Redis** → para listagem de posts (invalida em criação/like)  
 - **WebSocket** → notificações de post/like em tempo real  
 - **Segurança** → bcrypt configurável (`BCRYPT_COST`), JWT HS256, Helmet, CORS restrito  
+- **Refresh automático de seguidores & posts no perfil** → ao entrar/trocar de perfil a página força recarga de contagens (followers/following) e posts do usuário visualizado, evitando stale cache  
+- **Cache de posts segregado por usuário logado** → impede vazamento de feed entre contas após logout/login  
+ - **Reload forçado pós-login** → após autenticação a aplicação redireciona e força carregamento limpo para garantir que não haja estado residual entre contas  
 
 ---
 

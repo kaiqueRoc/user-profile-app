@@ -1,0 +1,205 @@
+{
+  "info": {
+    "name": "User Profile App API",
+    "_postman_id": "c3d5c5d2-0000-4d00-9000-collection-demo",
+    "description": "Coleção para testar API Gateway. Scripts populam variáveis de ambiente automaticamente (userId, token, etc).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extrai userId e token e salva variáveis",
+                  "let json; try { json = pm.response.json(); } catch(e) { json = null; }",
+                  "if (json) {",
+                  "  if (json.id) { pm.collectionVariables.set('userId', json.id); }",
+                  "  if (json.token) { pm.collectionVariables.set('token', json.token); }",
+                  "  if (json.email) { pm.collectionVariables.set('email', json.email); }",
+                  "  if (json.displayName) { pm.collectionVariables.set('displayName', json.displayName); }",
+                  "  pm.collectionVariables.set('password', pm.request.body ? JSON.parse(pm.request.body.raw).password : pm.collectionVariables.get('password'));",
+                  "  pm.test('Registrado com sucesso', function(){ pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+                  "} else { pm.test('Resposta JSON inválida', function(){ pm.expect.fail('Sem JSON'); }); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"displayName\": \"{{displayName}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api","auth","register"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "let json; try { json = pm.response.json(); } catch(e) { json = null; }",
+                  "if (json && json.token) {",
+                  "  pm.collectionVariables.set('token', json.token);",
+                  "  if (json.id) pm.collectionVariables.set('userId', json.id);",
+                  "  if (json.displayName) pm.collectionVariables.set('displayName', json.displayName);",
+                  "  pm.test('Login OK', function(){ pm.expect(pm.response.code).to.equal(200); });",
+                  "} else { pm.test('Login falhou', function(){ pm.expect.fail('Sem token'); }); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api","auth","login"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Profiles",
+      "item": [
+        {
+          "name": "Get Me",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j){ if(j.userId){ pm.collectionVariables.set('userId', j.userId);} if(j.displayName){ pm.collectionVariables.set('displayName', j.displayName);} if(j.avatarUrl){ pm.collectionVariables.set('avatarUrl', j.avatarUrl);} pm.test('Perfil OK', ()=> pm.expect(pm.response.code).to.equal(200)); }"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/profiles/me", "host": ["{{baseUrl}}"], "path": ["api","profiles","me"] } }
+        },
+        {
+          "name": "Update Me",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j){ if(j.bio!==undefined) pm.collectionVariables.set('bio', j.bio); if(j.avatarUrl!==undefined) pm.collectionVariables.set('avatarUrl', j.avatarUrl); pm.test('Atualizou perfil', ()=> pm.expect(pm.response.code).to.equal(200)); }"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "PUT", "header": [{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"bio\": \"{{bio}}\",\n  \"avatarUrl\": \"{{avatarUrl}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/profiles/me", "host": ["{{baseUrl}}"], "path": ["api","profiles","me"] } }
+        },
+        {
+          "name": "List Following",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/profiles/{{userId}}/following", "host": ["{{baseUrl}}"], "path": ["api","profiles","{{userId}}","following"] } }
+        }
+      ]
+    },
+    {
+      "name": "Posts",
+      "item": [
+        {
+          "name": "List Posts",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/posts", "host": ["{{baseUrl}}"], "path": ["api","posts"] } }
+        },
+        {
+          "name": "Create Post",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j && j.id){ pm.collectionVariables.set('lastPostId', j.id); pm.test('Post criado', ()=> pm.expect(pm.response.code).to.be.oneOf([200,201])); }"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "POST", "header": [{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"content\": \"Post de teste {{randomInt}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/posts", "host": ["{{baseUrl}}"], "path": ["api","posts"] } }
+        },
+        {
+          "name": "Like Toggle",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('Like toggle OK', ()=> pm.expect(pm.response.code).to.equal(200));"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/like", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","like"] } }
+        },
+        {
+          "name": "Comment Create",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["let j;try{j=pm.response.json();}catch(e){} if(j && j.id){ pm.collectionVariables.set('lastCommentId', j.id); pm.test('Comentário criado', ()=> pm.expect(pm.response.code).to.be.oneOf([200,201])); }"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "POST", "header": [{"key":"Content-Type","value":"application/json"}], "body": {"mode":"raw","raw":"{\n  \"content\": \"Comentário teste {{randomInt}}\"\n}"}, "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/comments", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","comments"] } }
+        },
+        {
+          "name": "List Comments of Post",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}/comments", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}","comments"] } }
+        },
+        {
+          "name": "Delete Post",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('Deletou (204)', ()=> pm.expect(pm.response.code).to.equal(204));"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "DELETE", "url": { "raw": "{{baseUrl}}/api/posts/{{lastPostId}}", "host": ["{{baseUrl}}"], "path": ["api","posts","{{lastPostId}}"] } }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List My Notifications",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } },
+            { "listen": "test", "script": { "exec": ["pm.test('Listou notificações', ()=> pm.expect(pm.response.code).to.equal(200));"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/notifications/{{userId}}", "host": ["{{baseUrl}}"], "path": ["api","notifications","{{userId}}"] } }
+        },
+        {
+          "name": "Mark Notification Read",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.request.headers.add({key:'Authorization', value:'Bearer ' + pm.collectionVariables.get('token')});"], "type": "text/javascript" } }
+          ],
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/notifications/{{notificationId}}/read", "host": ["{{baseUrl}}"], "path": ["api","notifications","{{notificationId}}","read"] } }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Search Users",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/users?query={{searchQuery}}", "host": ["{{baseUrl}}"], "path": ["api","users"], "query": [ {"key":"query","value":"{{searchQuery}}"} ] } }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "// Gera valores padrão se não existirem",
+          "if (!pm.collectionVariables.get('baseUrl')) pm.collectionVariables.set('baseUrl', 'http://localhost:3001');",
+          "if (!pm.collectionVariables.get('email')) pm.collectionVariables.set('email', 'user'+ Date.now() +'@test.local');",
+          "if (!pm.collectionVariables.get('password')) pm.collectionVariables.set('password', 'secret123');",
+          "if (!pm.collectionVariables.get('displayName')) pm.collectionVariables.set('displayName', 'Teste '+ new Date().getSeconds());",
+          "pm.collectionVariables.set('randomInt', Math.floor(Math.random()*100000));"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3001" },
+    { "key": "email", "value": "" },
+    { "key": "password", "value": "" },
+    { "key": "displayName", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "token", "value": "" },
+    { "key": "lastPostId", "value": "" },
+    { "key": "lastCommentId", "value": "" },
+    { "key": "avatarUrl", "value": "" },
+    { "key": "bio", "value": "Minha bio" },
+    { "key": "notificationId", "value": "" },
+    { "key": "searchQuery", "value": "test" },
+    { "key": "randomInt", "value": "0" }
+  ]
+}

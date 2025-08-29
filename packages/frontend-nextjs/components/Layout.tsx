@@ -55,6 +55,24 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
         if (wsBase) {
           let ws: WebSocket | null = null;
           let reconnectTimeout = 1000;
+          const pendingQueue: any[] = [];
+          const processQueue = () => {
+            if (!pendingQueue.length) return;
+            const copy = pendingQueue.splice(0, pendingQueue.length);
+            copy.forEach(handleIncoming);
+          };
+          const handleIncoming = (msg: any) => {
+            if (msg.type === 'notification_created') {
+              const n = msg.notification || { id: msg.notificationId, userId: msg.userId, type: msg.notificationType || msg.payload?.type || msg.typeDetail || 'generic', payload: msg.payload, read: false, createdAt: new Date().toISOString() };
+              const curUserId = (() => { try { const p = JSON.parse(localStorage.getItem('profile')||'null'); return p?.userId; } catch(e){return null;} })();
+              if (n.userId && curUserId && n.userId !== curUserId) return;
+              try { const actor = n.payload?.from; if (actor && curUserId && actor === curUserId) return; } catch(e) {}
+              setNotifications(prev => prev.some(x=>x.id===n.id)? prev : [n, ...prev]);
+              const next = (parseInt(localStorage.getItem('notifications_unread') || '0', 10) || 0) + 1;
+              localStorage.setItem('notifications_unread', String(next));
+              setBadgeCount(next);
+            }
+          };
           const connect = () => {
             try {
               const token = localStorage.getItem('token');
@@ -68,20 +86,7 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
                 reconnectTimeout = 1000; 
                 console.log('WebSocket connected successfully');
               };
-              ws.onmessage = (ev) => {
-                try {
-                  const msg = JSON.parse(ev.data);
-                  if (msg.type === 'notification_created') {
-                    const n = msg.notification || { id: msg.notificationId, userId: msg.userId, type: msg.payload?.type || msg.typeDetail || 'generic', payload: msg.payload, read: false, createdAt: new Date().toISOString() };
-                    const curUserId = (() => { try { const p = JSON.parse(localStorage.getItem('profile')||'null'); return p?.userId; } catch(e){return null;} })();
-                    if (n.userId && curUserId && n.userId !== curUserId) return;
-                    setNotifications(prev => prev.some(x=>x.id===n.id)? prev : [n, ...prev]);
-                    const next = (parseInt(localStorage.getItem('notifications_unread') || '0', 10) || 0) + 1;
-                    localStorage.setItem('notifications_unread', String(next));
-                    setBadgeCount(next);
-                  }
-                } catch (e) {}
-              };
+              ws.onmessage = (ev) => { try { const msg = JSON.parse(ev.data); handleIncoming(msg); } catch(e){} };
               ws.onclose = (event) => { 
                 console.log('WebSocket closed:', event.code, event.reason);
                 if (localStorage.getItem('token')) { // Só reconectar se ainda houver token
@@ -130,6 +135,14 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
           if (av) { try { localStorage.setItem('avatarUrl', av); } catch(_){} } else { try { localStorage.removeItem('avatarUrl'); } catch(_){} }
         }
       } catch (e) {}
+      // Atualiza notificações e badge ao mudar auth
+      if (tok) {
+        fetchNotifications().catch(()=>{});
+      } else {
+        setNotifications([]);
+        setBadgeCount(0);
+        try { localStorage.removeItem('notifications_unread'); } catch(e){}
+      }
     };
     window.addEventListener('auth-changed', handleAuthChange as any);
     window.addEventListener('profile-updated', handleAuthChange as any);
@@ -140,6 +153,15 @@ export default function Layout({ children, title = 'User Profile App' }: any) {
       window.removeEventListener('storage', handleAuthChange);
     };
   }, []);
+
+  // Recarrega notificações quando token muda (ex: login inicial) se ainda não carregado
+  useEffect(() => {
+    if (!token) return;
+    // Evita dupla chamada se já tem lista
+    if (notifications.length === 0) {
+      fetchNotifications().catch(()=>{});
+    }
+  }, [token]);
 
   const logout = () => {
     if (typeof window !== 'undefined') {

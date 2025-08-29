@@ -128,8 +128,15 @@ func (a *App) addFollow(w http.ResponseWriter, r *http.Request, ps httprouter.Pa
 		b, _ := json.Marshal(map[string]any{"userId": target, "type": "follow", "payload": payload})
 		postURL := os.Getenv("POST_SERVICE_URL")
 		if postURL == "" { postURL = "http://post-service:8083" }
-		// ignorar erros (serviço pode estar temporariamente indisponível)
-		http.Post(postURL+"/internal/notifications", "application/json", bytes.NewReader(b))
+		resp, err := http.Post(postURL+"/internal/notifications", "application/json", bytes.NewReader(b))
+		if err != nil {
+			log.Printf("follow notif dispatch error follower=%s target=%s err=%v", follower, target, err)
+			return
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			log.Printf("follow notif dispatch unexpected status follower=%s target=%s status=%d", follower, target, resp.StatusCode)
+		}
 	}(req.FollowerId, followee)
 	w.WriteHeader(204)
 }

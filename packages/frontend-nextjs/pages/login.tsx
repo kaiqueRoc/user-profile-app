@@ -56,10 +56,20 @@ export default function Login() {
         }
       } catch (e) { }
       setSuccess(true);
+      // Limpa caches potencialmente antigos antes de anunciar nova sessão
+      try {
+        localStorage.removeItem('notifications_unread');
+        localStorage.removeItem('following');
+      } catch(e){}
       setTimeout(() => {
         try { window.dispatchEvent(new Event('auth-changed')); } catch (e) { }
-        router.push('/');
-      }, 400);
+        // Força reload completo para evitar qualquer resquício de estado (WebSocket, caches em memória, etc.)
+        if (typeof window !== 'undefined') {
+          window.location.href = '/feed';
+        } else {
+          router.replace('/feed');
+        }
+      }, 300);
     } catch (err) {
       setErrors({ general: 'Erro ao conectar' });
       setLoading(false);

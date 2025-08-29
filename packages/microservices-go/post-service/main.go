@@ -183,8 +183,8 @@ func (a *App) likeToggle(w http.ResponseWriter, r *http.Request, ps httprouter.P
 		payloadMap := map[string]any{"postId": postID, "from": req.UserID, "fromName": fromName}
 		payload, _ := json.Marshal(payloadMap)
 		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "like", payload)
-		// broadcast notification event so clients can update badge in realtime (include same payload)
-		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":payloadMap})
+		// broadcast notification event so clients can update badge in realtime (include same payload + notificationType)
+		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":payloadMap, "notificationType":"like"})
 		a.Hub.broadcast <- notifMsg
 	}
 	eventType := "post_liked"
@@ -223,8 +223,8 @@ func (a *App) addComment(w http.ResponseWriter, r *http.Request, ps httprouter.P
 		payloadMap := map[string]any{"postId": postID, "commentId": id, "from": req.UserID, "fromName": fromName, "comment": req.Content}
 		payload, _ := json.Marshal(payloadMap)
 		a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, owner, "comment", payload)
-		// broadcast
-		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":payloadMap})
+		// broadcast (include notificationType)
+		notifMsg, _ := json.Marshal(map[string]any{"type":"notification_created","userId":owner,"notificationId":nid,"payload":payloadMap, "notificationType":"comment"})
 		a.Hub.broadcast <- notifMsg
 	}
 	// fetch inserted comment to include created_at
@@ -325,6 +325,10 @@ func (a *App) listNotifications(w http.ResponseWriter, r *http.Request, ps httpr
 		if err := rows.Scan(&id, &ntype, &payload, &read, &createdAt); err == nil {
 			p := map[string]any{}
 			_ = json.Unmarshal(payload, &p)
+			// skip self-action notifications (if payload.from == user itself) for like/comment/follow types
+			if from, ok := p["from"].(string); ok && from == userID && (ntype == "like" || ntype == "comment" || ntype == "follow") {
+				continue
+			}
 			// enrich fromName
 			if p != nil {
 				if _, ok := p["fromName"]; !ok {
@@ -385,14 +389,24 @@ func (a *App) createNotificationInternal(w http.ResponseWriter, r *http.Request,
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w, err.Error(), 400); return }
 	if req.UserID == "" || req.Type == "" { http.Error(w, "missing fields", 400); return }
+	// sanitize payload.fromName if missing (best effort enrichment)
+	if req.Payload != nil {
+		if _, ok := req.Payload["fromName"]; !ok {
+			if from, ok2 := req.Payload["from"].(string); ok2 && from != "" {
+				var fromName string
+				_ = a.DB.QueryRow(context.Background(), `SELECT COALESCE(NULLIF(display_name,''), split_part(email,'@',1)) FROM users WHERE id=$1`, from).Scan(&fromName)
+				if fromName != "" { req.Payload["fromName"] = fromName }
+			}
+		}
+	}
 	ctx := context.Background()
 	nid := uuid.NewString()
 	pb, _ := json.Marshal(req.Payload)
 	if _, err := a.DB.Exec(ctx, `INSERT INTO notifications (id,user_id,type,payload) VALUES ($1,$2,$3,$4)`, nid, req.UserID, req.Type, pb); err != nil {
 		http.Error(w, err.Error(), 500); return
 	}
-	// broadcast
-	notifPayload := map[string]any{"type":"notification_created","userId":req.UserID,"notificationId":nid,"payload":req.Payload}
+	// broadcast (include notificationType)
+	notifPayload := map[string]any{"type":"notification_created","userId":req.UserID,"notificationId":nid,"payload":req.Payload, "notificationType":req.Type}
 	msg, _ := json.Marshal(notifPayload)
 	a.Hub.broadcast <- msg
 	w.WriteHeader(201)

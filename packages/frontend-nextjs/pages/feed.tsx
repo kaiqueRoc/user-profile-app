@@ -10,7 +10,7 @@ type Comment = { id:string; postId:string; userId:string; content:string; create
 export default function Feed() {
   const profile = (typeof window !== 'undefined') ? ((() => { try { return JSON.parse(localStorage.getItem('profile')||'null'); } catch(e){ return null; } })()) : null;
   const feedFor = profile?.userId || '';
-  const { posts, load, create, like, comment, update, remove, loading } = usePosts(feedFor);
+  const { posts, load, create, like, comment, update, remove, mergePosts, removePostsByUser, loading } = usePosts(feedFor);
   const [content, setContent] = useState('');
   const [composerError, setComposerError] = useState<string | null>(null);
   const [composerSuccess, setComposerSuccess] = useState(false);
@@ -75,11 +75,38 @@ export default function Feed() {
       if (!tok) return alert('Faça login');
       if (me?.userId && me.userId === id) { return; } // não seguir a si mesmo
       if (following.includes(id)) {
-        await fetch(`${API}/api/profiles/${id}/unfollow`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify({ followerId: me?.userId }) });
+        // Otimista: remove imediatamente
+        const prevPosts = posts.filter(p=>p.userId===id);
+        removePostsByUser(id);
         const next = following.filter(x=>x!==id); setFollowing(next); localStorage.setItem('following', JSON.stringify(next));
+        try {
+          const res = await fetch(`${API}/api/profiles/${id}/unfollow`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify({ followerId: me?.userId }) });
+          if (!res.ok) {
+            // Reverte se falhar
+            mergePosts(prevPosts);
+            const reverted = [...next, id];
+            setFollowing(reverted); localStorage.setItem('following', JSON.stringify(reverted));
+          }
+        } catch(e) {
+          mergePosts(prevPosts);
+          const reverted = [...next, id];
+          setFollowing(reverted); localStorage.setItem('following', JSON.stringify(reverted));
+        }
       } else {
         await fetch(`${API}/api/profiles/${id}/follow`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify({ followerId: me?.userId }) });
         const next = [...following, id]; setFollowing(next); localStorage.setItem('following', JSON.stringify(next));
+        // Busca posts recentes do usuário seguido e injeta imediatamente no feed
+        try {
+          const res = await fetch(`${API}/api/posts?feedFor=${encodeURIComponent(id)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              // filtra apenas posts desse usuário seguido
+              const their = data.filter((p:any)=> p.userId === id);
+              mergePosts(their);
+            }
+          }
+        } catch(e){}
       }
     })();
   };
@@ -121,6 +148,19 @@ export default function Feed() {
       }
     })();
   }, []);
+
+  // Reagir a mudança de auth (logout/login) para garantir feed atualizado e evitar dados desatualizados
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onAuth = () => {
+      const t = localStorage.getItem('token');
+      if (!t) { router.push('/login'); return; }
+      // reload posts para novo usuário
+      load();
+    };
+    window.addEventListener('auth-changed', onAuth as any);
+    return () => window.removeEventListener('auth-changed', onAuth as any);
+  }, [load]);
 
   // removed toggleNotifications (centralized in Layout)
 
